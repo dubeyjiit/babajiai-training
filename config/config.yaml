@@ -6,7 +6,6 @@ project:
 
 storage:
   # GCS bucket for pipeline artifacts, compiled YAMLs, model artifacts
-#newchange
   pipeline_root: "gs://babajiai-training-mlops-artifacts/pipeline_root"
   compiled_pipelines: "gs://babajiai-training-mlops-artifacts/compiled_pipelines"
   model_artifacts: "gs://babajiai-training-mlops-artifacts/models"
