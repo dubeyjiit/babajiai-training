@@ -1,0 +1,1127 @@
+# PIPELINE DEFINITION
+# Name: used-car-inference-pipeline
+# Description: Inference pipeline for used car price prediction. Triggered by new rows in BigQuery. Routes to online or batch prediction based on row count.
+# Inputs:
+#    batch_machine_type: str [Default: 'n1-standard-4']
+#    batch_max_replicas: int [Default: 10.0]
+#    batch_starting_replicas: int [Default: 2.0]
+#    batch_threshold: int [Default: 100.0]
+#    bq_dataset: str [Default: 'used_car_mlops']
+#    endpoint_id: str [Default: '']
+#    inference_table: str [Default: 'car_prices_inference']
+#    model_resource_name: str [Default: '']
+#    pipeline_run_id: str [Default: 'manual']
+#    predictions_table: str [Default: 'car_predictions']
+#    preprocessor_gcs_path: str [Default: '']
+#    processed_table: str [Default: 'car_prices_inference_processed']
+#    project_id: str
+#    region: str [Default: 'us-central1']
+#    staging_bucket: str [Default: 'gs://<YOUR_PROJECT>-mlops-artifacts']
+# Outputs:
+#    batch-prediction-op-prediction_metrics: system.Metrics
+#    check-new-data-op-data_check: system.Metrics
+#    online-prediction-op-prediction_metrics: system.Metrics
+#    store-predictions-op-2-store_metrics: system.Metrics
+#    store-predictions-op-store_metrics: system.Metrics
+components:
+  comp-batch-prediction-op:
+    executorLabel: exec-batch-prediction-op
+    inputDefinitions:
+      artifacts:
+        preprocessed_inference:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        batch_machine_type:
+          parameterType: STRING
+        batch_max_replicas:
+          parameterType: NUMBER_INTEGER
+        batch_starting_replicas:
+          parameterType: NUMBER_INTEGER
+        model_resource_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        predictions:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-check-new-data-op:
+    executorLabel: exec-check-new-data-op
+    inputDefinitions:
+      parameters:
+        batch_threshold:
+          parameterType: NUMBER_INTEGER
+        bq_dataset:
+          parameterType: STRING
+        inference_table:
+          parameterType: STRING
+        processed_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        data_check:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        new_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        inference_mode:
+          parameterType: STRING
+        row_count:
+          parameterType: NUMBER_INTEGER
+  comp-condition-1:
+    dag:
+      outputs:
+        artifacts:
+          batch-prediction-op-prediction_metrics:
+            artifactSelectors:
+            - outputArtifactKey: batch-prediction-op-prediction_metrics
+              producerSubtask: condition-3
+          online-prediction-op-prediction_metrics:
+            artifactSelectors:
+            - outputArtifactKey: online-prediction-op-prediction_metrics
+              producerSubtask: condition-2
+          store-predictions-op-2-store_metrics:
+            artifactSelectors:
+            - outputArtifactKey: store-predictions-op-2-store_metrics
+              producerSubtask: condition-3
+          store-predictions-op-store_metrics:
+            artifactSelectors:
+            - outputArtifactKey: store-predictions-op-store_metrics
+              producerSubtask: condition-2
+      tasks:
+        condition-2:
+          componentRef:
+            name: comp-condition-2
+          dependentTasks:
+          - preprocess-inference-op
+          inputs:
+            artifacts:
+              pipelinechannel--preprocess-inference-op-preprocessed_inference:
+                taskOutputArtifact:
+                  outputArtifactKey: preprocessed_inference
+                  producerTask: preprocess-inference-op
+            parameters:
+              pipelinechannel--bq_dataset:
+                componentInputParameter: pipelinechannel--bq_dataset
+              pipelinechannel--check-new-data-op-inference_mode:
+                componentInputParameter: pipelinechannel--check-new-data-op-inference_mode
+              pipelinechannel--check-new-data-op-row_count:
+                componentInputParameter: pipelinechannel--check-new-data-op-row_count
+              pipelinechannel--endpoint_id:
+                componentInputParameter: pipelinechannel--endpoint_id
+              pipelinechannel--model_resource_name:
+                componentInputParameter: pipelinechannel--model_resource_name
+              pipelinechannel--pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              pipelinechannel--predictions_table:
+                componentInputParameter: pipelinechannel--predictions_table
+              pipelinechannel--processed_table:
+                componentInputParameter: pipelinechannel--processed_table
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+          taskInfo:
+            name: Online prediction
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--check-new-data-op-inference_mode']
+              == 'online'
+        condition-3:
+          componentRef:
+            name: comp-condition-3
+          dependentTasks:
+          - preprocess-inference-op
+          inputs:
+            artifacts:
+              pipelinechannel--preprocess-inference-op-preprocessed_inference:
+                taskOutputArtifact:
+                  outputArtifactKey: preprocessed_inference
+                  producerTask: preprocess-inference-op
+            parameters:
+              pipelinechannel--batch_machine_type:
+                componentInputParameter: pipelinechannel--batch_machine_type
+              pipelinechannel--batch_max_replicas:
+                componentInputParameter: pipelinechannel--batch_max_replicas
+              pipelinechannel--batch_starting_replicas:
+                componentInputParameter: pipelinechannel--batch_starting_replicas
+              pipelinechannel--bq_dataset:
+                componentInputParameter: pipelinechannel--bq_dataset
+              pipelinechannel--check-new-data-op-inference_mode:
+                componentInputParameter: pipelinechannel--check-new-data-op-inference_mode
+              pipelinechannel--check-new-data-op-row_count:
+                componentInputParameter: pipelinechannel--check-new-data-op-row_count
+              pipelinechannel--model_resource_name:
+                componentInputParameter: pipelinechannel--model_resource_name
+              pipelinechannel--pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              pipelinechannel--predictions_table:
+                componentInputParameter: pipelinechannel--predictions_table
+              pipelinechannel--processed_table:
+                componentInputParameter: pipelinechannel--processed_table
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: Batch prediction
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--check-new-data-op-inference_mode']
+              == 'batch'
+        preprocess-inference-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-preprocess-inference-op
+          inputs:
+            artifacts:
+              new_data:
+                componentInputArtifact: pipelinechannel--check-new-data-op-new_data
+            parameters:
+              preprocessor_gcs_path:
+                componentInputParameter: pipelinechannel--preprocessor_gcs_path
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: "2 \xB7 Preprocess Inference Data"
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--check-new-data-op-new_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--batch_machine_type:
+          parameterType: STRING
+        pipelinechannel--batch_max_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--batch_starting_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--bq_dataset:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-inference_mode:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-row_count:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--endpoint_id:
+          parameterType: STRING
+        pipelinechannel--model_resource_name:
+          parameterType: STRING
+        pipelinechannel--pipeline_run_id:
+          parameterType: STRING
+        pipelinechannel--predictions_table:
+          parameterType: STRING
+        pipelinechannel--preprocessor_gcs_path:
+          parameterType: STRING
+        pipelinechannel--processed_table:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        batch-prediction-op-prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        online-prediction-op-prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        store-predictions-op-2-store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        store-predictions-op-store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-condition-2:
+    dag:
+      outputs:
+        artifacts:
+          online-prediction-op-prediction_metrics:
+            artifactSelectors:
+            - outputArtifactKey: prediction_metrics
+              producerSubtask: online-prediction-op
+          store-predictions-op-store_metrics:
+            artifactSelectors:
+            - outputArtifactKey: store_metrics
+              producerSubtask: store-predictions-op
+      tasks:
+        online-prediction-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-online-prediction-op
+          inputs:
+            artifacts:
+              preprocessed_inference:
+                componentInputArtifact: pipelinechannel--preprocess-inference-op-preprocessed_inference
+            parameters:
+              endpoint_id:
+                componentInputParameter: pipelinechannel--endpoint_id
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+          taskInfo:
+            name: "3a \xB7 Online Endpoint Prediction"
+        store-predictions-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-store-predictions-op
+          dependentTasks:
+          - online-prediction-op
+          inputs:
+            artifacts:
+              predictions:
+                taskOutputArtifact:
+                  outputArtifactKey: predictions
+                  producerTask: online-prediction-op
+            parameters:
+              bq_dataset:
+                componentInputParameter: pipelinechannel--bq_dataset
+              model_resource_name:
+                componentInputParameter: pipelinechannel--model_resource_name
+              pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              predictions_table:
+                componentInputParameter: pipelinechannel--predictions_table
+              processed_table:
+                componentInputParameter: pipelinechannel--processed_table
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: "4a \xB7 Store Online Predictions \u2192 BQ"
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--preprocess-inference-op-preprocessed_inference:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--bq_dataset:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-inference_mode:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-row_count:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--endpoint_id:
+          parameterType: STRING
+        pipelinechannel--model_resource_name:
+          parameterType: STRING
+        pipelinechannel--pipeline_run_id:
+          parameterType: STRING
+        pipelinechannel--predictions_table:
+          parameterType: STRING
+        pipelinechannel--processed_table:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        online-prediction-op-prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        store-predictions-op-store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-condition-3:
+    dag:
+      outputs:
+        artifacts:
+          batch-prediction-op-prediction_metrics:
+            artifactSelectors:
+            - outputArtifactKey: prediction_metrics
+              producerSubtask: batch-prediction-op
+          store-predictions-op-2-store_metrics:
+            artifactSelectors:
+            - outputArtifactKey: store_metrics
+              producerSubtask: store-predictions-op-2
+      tasks:
+        batch-prediction-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-batch-prediction-op
+          inputs:
+            artifacts:
+              preprocessed_inference:
+                componentInputArtifact: pipelinechannel--preprocess-inference-op-preprocessed_inference
+            parameters:
+              batch_machine_type:
+                componentInputParameter: pipelinechannel--batch_machine_type
+              batch_max_replicas:
+                componentInputParameter: pipelinechannel--batch_max_replicas
+              batch_starting_replicas:
+                componentInputParameter: pipelinechannel--batch_starting_replicas
+              model_resource_name:
+                componentInputParameter: pipelinechannel--model_resource_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: "3b \xB7 Batch Prediction Job (Vertex AI Batch Inference)"
+        store-predictions-op-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-store-predictions-op-2
+          dependentTasks:
+          - batch-prediction-op
+          inputs:
+            artifacts:
+              predictions:
+                taskOutputArtifact:
+                  outputArtifactKey: predictions
+                  producerTask: batch-prediction-op
+            parameters:
+              bq_dataset:
+                componentInputParameter: pipelinechannel--bq_dataset
+              model_resource_name:
+                componentInputParameter: pipelinechannel--model_resource_name
+              pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              predictions_table:
+                componentInputParameter: pipelinechannel--predictions_table
+              processed_table:
+                componentInputParameter: pipelinechannel--processed_table
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: "4b \xB7 Store Batch Predictions \u2192 BQ"
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--preprocess-inference-op-preprocessed_inference:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--batch_machine_type:
+          parameterType: STRING
+        pipelinechannel--batch_max_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--batch_starting_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--bq_dataset:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-inference_mode:
+          parameterType: STRING
+        pipelinechannel--check-new-data-op-row_count:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--model_resource_name:
+          parameterType: STRING
+        pipelinechannel--pipeline_run_id:
+          parameterType: STRING
+        pipelinechannel--predictions_table:
+          parameterType: STRING
+        pipelinechannel--processed_table:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        batch-prediction-op-prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        store-predictions-op-2-store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-online-prediction-op:
+    executorLabel: exec-online-prediction-op
+    inputDefinitions:
+      artifacts:
+        preprocessed_inference:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        endpoint_id:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        prediction_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        predictions:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-preprocess-inference-op:
+    executorLabel: exec-preprocess-inference-op
+    inputDefinitions:
+      artifacts:
+        new_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        preprocessor_gcs_path:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        preprocessed_inference:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-store-predictions-op:
+    executorLabel: exec-store-predictions-op
+    inputDefinitions:
+      artifacts:
+        predictions:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        bq_dataset:
+          parameterType: STRING
+        model_resource_name:
+          parameterType: STRING
+        pipeline_run_id:
+          parameterType: STRING
+        predictions_table:
+          parameterType: STRING
+        processed_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-store-predictions-op-2:
+    executorLabel: exec-store-predictions-op-2
+    inputDefinitions:
+      artifacts:
+        predictions:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        bq_dataset:
+          parameterType: STRING
+        model_resource_name:
+          parameterType: STRING
+        pipeline_run_id:
+          parameterType: STRING
+        predictions_table:
+          parameterType: STRING
+        processed_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        store_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-batch-prediction-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - batch_prediction_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'scikit-learn==1.4.2'\
+          \ 'xgboost==2.0.3' 'google-cloud-aiplatform==1.60.0' 'google-cloud-storage==2.17.0'\
+          \ 'pandas==2.2.2' 'numpy==1.26.4' 'joblib==1.4.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef batch_prediction_op(\n    project_id: str,\n    region: str,\n\
+          \    staging_bucket: str,\n    model_resource_name: str,\n    batch_machine_type:\
+          \ str,           # kept for pipeline signature compatibility\n    batch_starting_replicas:\
+          \ int,      # kept for pipeline signature compatibility\n    batch_max_replicas:\
+          \ int,           # kept for pipeline signature compatibility\n    preprocessed_inference:\
+          \ Input[Dataset],\n    predictions: Output[Dataset],\n    prediction_metrics:\
+          \ Output[Metrics],\n) -> None:\n    \"\"\"\n    Score inference rows locally\
+          \ by loading the model artifact from GCS.\n\n    Why local scoring instead\
+          \ of Vertex AI Batch Prediction service:\n      The sklearn-cpu.1-3 pre-built\
+          \ serving container is incompatible with\n      a pickled sklearn Pipeline\
+          \ that contains XGBoost 2.0.3 \u2014 it raises\n      \"'numpy.ndarray'\
+          \ object has no attribute 'predict'\" on every request.\n      Loading the\
+          \ model directly with the same sklearn==1.4.2 / xgboost==2.0.3\n      versions\
+          \ used during training is reliable and avoids VM spin-up latency.\n    \"\
+          \"\"\n    import io\n    import joblib\n    import numpy as np\n    import\
+          \ pandas as pd\n    import google.cloud.aiplatform as aip\n    from google.cloud\
+          \ import storage\n\n    aip.init(project=project_id, location=region)\n\n\
+          \    # \u2500\u2500 Load preprocessed features \u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\n    df = pd.read_csv(preprocessed_inference.path\
+          \ + \".csv\")\n    row_ids    = df[\"row_id\"].tolist() if \"row_id\" in\
+          \ df.columns else list(range(len(df)))\n    feature_df = df.drop(columns=[\"\
+          row_id\"], errors=\"ignore\")\n    print(f\"Scoring {len(feature_df)} rows\
+          \ \xB7 {feature_df.shape[1]} features\")\n\n    # \u2500\u2500 Fetch model\
+          \ artifact URI from Vertex AI Model Registry \u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n   \
+          \ model_obj    = aip.Model(model_resource_name)\n    artifact_uri = model_obj.uri\
+          \                   # gs://.../models/{run-id}\n    gcs_pkl      = artifact_uri.rstrip(\"\
+          /\") + \"/model.pkl\"\n    print(f\"Loading model from: {gcs_pkl}\")\n\n\
+          \    # \u2500\u2500 Download and deserialise full sklearn Pipeline \u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \n    gcs_client  = storage.Client(project=project_id)\n    bucket_name\
+          \ = gcs_pkl.replace(\"gs://\", \"\").split(\"/\")[0]\n    blob_path   =\
+          \ \"/\".join(gcs_pkl.replace(\"gs://\", \"\").split(\"/\")[1:])\n    pipeline\
+          \    = joblib.load(io.BytesIO(\n        gcs_client.bucket(bucket_name).blob(blob_path).download_as_bytes()\n\
+          \    ))\n    print(f\"Model type: {type(pipeline)}\")\n\n    # \u2500\u2500\
+          \ Local prediction \u2014 Pipeline handles ColumnTransformer internally\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    # Pass DataFrame (not\
+          \ .values) so ColumnTransformer can index by column name\n    y_pred = pipeline.predict(feature_df)\n\
+          \    print(f\"Predictions: min={y_pred.min():.2f}  max={y_pred.max():.2f}\
+          \  mean={y_pred.mean():.2f}\")\n\n    # \u2500\u2500 Save results \u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    pred_df\
+          \ = pd.DataFrame({\n        \"row_id\":          row_ids,\n        \"predicted_price\"\
+          : y_pred.round(2).tolist(),\n    })\n    pred_df.to_csv(predictions.path\
+          \ + \".csv\", index=False)\n\n    prediction_metrics.log_metric(\"rows_predicted\"\
+          ,        len(pred_df))\n    prediction_metrics.log_metric(\"mean_predicted_price\"\
+          ,  float(np.mean(y_pred)))\n    prediction_metrics.log_metric(\"min_predicted_price\"\
+          ,   float(np.min(y_pred)))\n    prediction_metrics.log_metric(\"max_predicted_price\"\
+          ,   float(np.max(y_pred)))\n    print(f\"Local batch scoring complete: {len(pred_df)}\
+          \ rows\")\n\n"
+        image: python:3.10-slim
+    exec-check-new-data-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - check_new_data_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery[pandas]==3.25.0'\
+          \ 'pandas==2.2.2' 'db-dtypes==1.3.0' 'pyarrow==15.0.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef check_new_data_op(\n    project_id: str,\n    bq_dataset: str,\n\
+          \    inference_table: str,\n    processed_table: str,\n    batch_threshold:\
+          \ int,\n    new_data: Output[Dataset],\n    data_check: Output[Metrics],\n\
+          ) -> NamedTuple(\"DataCheckOutputs\", [(\"row_count\", int), (\"inference_mode\"\
+          , str)]):\n    \"\"\"Query BQ for rows not yet in the processed-tracking\
+          \ table.\"\"\"\n    from google.cloud import bigquery\n    from collections\
+          \ import namedtuple\n\n    client = bigquery.Client(project=project_id)\n\
+          \n    query = f\"\"\"\n        SELECT inf.*\n        FROM `{project_id}.{bq_dataset}.{inference_table}`\
+          \ inf\n        LEFT JOIN `{project_id}.{bq_dataset}.{processed_table}` proc\n\
+          \          USING (row_id)\n        WHERE proc.row_id IS NULL\n        ORDER\
+          \ BY inf.row_id\n    \"\"\"\n    print(f\"=== Checking for new inference\
+          \ rows ===\\n{query}\")\n\n    df = client.query(query).to_dataframe()\n\
+          \    row_count = len(df)\n    print(f\"Found {row_count} unprocessed rows\"\
+          )\n\n    df.to_csv(new_data.path + \".csv\", index=False)\n\n    inference_mode\
+          \ = \"batch\" if row_count >= batch_threshold else \"online\"\n    print(f\"\
+          Inference mode: {inference_mode} (threshold={batch_threshold})\")\n\n  \
+          \  data_check.log_metric(\"new_row_count\", row_count)\n    data_check.log_metric(\"\
+          batch_threshold\", batch_threshold)\n    data_check.log_metric(\"inference_mode_is_batch\"\
+          , int(inference_mode == \"batch\"))\n\n    DataCheckOutputs = namedtuple(\"\
+          DataCheckOutputs\", [\"row_count\", \"inference_mode\"])\n    return DataCheckOutputs(row_count=row_count,\
+          \ inference_mode=inference_mode)\n\n"
+        image: python:3.10-slim
+    exec-online-prediction-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - online_prediction_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform==1.60.0'\
+          \ 'pandas==2.2.2' 'numpy==1.26.4' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef online_prediction_op(\n    project_id: str,\n    region: str,\n\
+          \    endpoint_id: str,\n    preprocessed_inference: Input[Dataset],\n  \
+          \  predictions: Output[Dataset],\n    prediction_metrics: Output[Metrics],\n\
+          ) -> None:\n    \"\"\"\n    Send rows to the Vertex AI online endpoint in\
+          \ mini-batches.\n\n    The input CSV contains RAW+ENGINEERED features (not\
+          \ yet scaled/encoded).\n    The endpoint serves the full sklearn Pipeline\
+          \ (preprocessor + model),\n    so it handles ColumnTransformer internally\
+          \ \u2014 no pre-scaling needed here.\n    \"\"\"\n    import pandas as pd\n\
+          \    import google.cloud.aiplatform as aip\n\n    aip.init(project=project_id,\
+          \ location=region)\n\n    df = pd.read_csv(preprocessed_inference.path +\
+          \ \".csv\")\n    row_ids = df[\"row_id\"].tolist() if \"row_id\" in df.columns\
+          \ else [str(i) for i in range(len(df))]\n    # Drop row_id \u2014 endpoint\
+          \ expects only feature columns\n    feature_df = df.drop(columns=[\"row_id\"\
+          ], errors=\"ignore\")\n\n    endpoint = aip.Endpoint(endpoint_name=endpoint_id)\n\
+          \n    BATCH_SIZE = 50   # Vertex AI online prediction: max instances per\
+          \ request\n    all_preds = []\n    for start in range(0, len(feature_df),\
+          \ BATCH_SIZE):\n        batch = feature_df.iloc[start:start + BATCH_SIZE]\n\
+          \        instances = batch.values.tolist()   # list of feature arrays (raw+engineered)\n\
+          \        response = endpoint.predict(instances=instances)\n        all_preds.extend(response.predictions)\n\
+          \n    pred_df = pd.DataFrame({\"row_id\": row_ids, \"predicted_price\":\
+          \ all_preds})\n    pred_df[\"predicted_price\"] = pred_df[\"predicted_price\"\
+          ].round(2)\n    pred_df.to_csv(predictions.path + \".csv\", index=False)\n\
+          \n    prediction_metrics.log_metric(\"rows_predicted\", len(pred_df))\n\
+          \    prediction_metrics.log_metric(\"mean_predicted_price\", float(pd.Series(all_preds).mean()))\n\
+          \    print(f\"Online predictions complete: {len(pred_df)} rows\")\n\n"
+        image: python:3.10-slim
+    exec-preprocess-inference-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocess_inference_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'scikit-learn==1.4.2'\
+          \ 'pandas==2.2.2' 'numpy==1.26.4' 'joblib==1.4.2' 'google-cloud-storage==2.17.0'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocess_inference_op(\n    project_id: str,\n    staging_bucket:\
+          \ str,\n    preprocessor_gcs_path: str,           # e.g. gs://bucket/models/latest/preprocessor.pkl\n\
+          \    new_data: Input[Dataset],\n    preprocessed_inference: Output[Dataset],\n\
+          ) -> None:\n    \"\"\"\n    Apply feature engineering and column selection\
+          \ ONLY.\n\n    The saved artifact is a full sklearn Pipeline(preprocessor\
+          \ + model).\n    When we call pipeline.predict(X), the Pipeline applies\
+          \ ColumnTransformer\n    internally. So this component must output RAW+ENGINEERED\
+          \ features\n    (before scaling/encoding), not already-transformed ones.\n\
+          \n    Feeding pre-scaled features into the Pipeline would double-preprocess\n\
+          \    and produce garbage predictions.\n    \"\"\"\n    import io\n    import\
+          \ joblib\n    import pandas as pd\n    from google.cloud import storage\n\
+          \n    print(\"=== Feature engineering for inference ===\")\n    df = pd.read_csv(new_data.path\
+          \ + \".csv\")\n    print(f\"Input rows: {len(df)}\")\n\n    # Download preprocessor\
+          \ metadata to get the exact column order used at training time\n    bucket_name\
+          \ = preprocessor_gcs_path.replace(\"gs://\", \"\").split(\"/\")[0]\n   \
+          \ blob_path   = \"/\".join(preprocessor_gcs_path.replace(\"gs://\", \"\"\
+          ).split(\"/\")[1:])\n    client = storage.Client(project=project_id)\n \
+          \   blob = client.bucket(bucket_name).blob(blob_path)\n    meta = joblib.load(io.BytesIO(blob.download_as_bytes()))[\"\
+          meta\"]\n\n    NUMERIC_FEATURES     = meta[\"numeric_features\"]\n    CATEGORICAL_FEATURES\
+          \ = meta[\"categorical_features\"]\n\n    # Feature engineering \u2014 identical\
+          \ to training preprocessing\n    df[\"car_age\"]          = 2024 - df[\"\
+          year\"]\n    df[\"mileage_per_year\"] = df[\"mileage\"] / (df[\"car_age\"\
+          ].replace(0, 1))\n    df[\"hp_per_liter\"]     = df[\"horsepower\"] / df[\"\
+          engine_size\"]\n\n    # Select columns in the exact order the Pipeline was\
+          \ fitted on\n    # Do NOT call preprocessor.transform() here \u2014 the\
+          \ full Pipeline does that internally\n    X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]\n\
+          \n    out_df = X.copy()\n    if \"row_id\" in df.columns:\n        out_df.insert(0,\
+          \ \"row_id\", df[\"row_id\"].values)\n\n    out_df.to_csv(preprocessed_inference.path\
+          \ + \".csv\", index=False)\n    print(f\"Feature-engineered rows saved:\
+          \ {len(out_df)}\")\n    print(f\"Columns (raw+engineered, pre-transform):\
+          \ {list(X.columns)}\")\n\n"
+        image: python:3.10-slim
+    exec-store-predictions-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - store_predictions_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery[pandas]==3.25.0'\
+          \ 'pandas==2.2.2' 'pyarrow==15.0.2' 'db-dtypes==1.3.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef store_predictions_op(\n    project_id: str,\n    bq_dataset:\
+          \ str,\n    predictions_table: str,\n    processed_table: str,\n    model_resource_name:\
+          \ str,\n    pipeline_run_id: str,\n    predictions: Input[Dataset],\n  \
+          \  store_metrics: Output[Metrics],\n) -> None:\n    \"\"\"Write predictions\
+          \ to BQ and mark source rows as processed.\"\"\"\n    import pandas as pd\n\
+          \    from google.cloud import bigquery\n\n    client = bigquery.Client(project=project_id)\n\
+          \    pred_df = pd.read_csv(predictions.path + \".csv\")\n\n    # Use pd.Timestamp\
+          \ so pyarrow can convert it to TIMESTAMP natively.\n    # datetime.isoformat()\
+          \ returns a plain string which pyarrow cannot cast.\n    now_ts = pd.Timestamp.utcnow()\n\
+          \    pred_df[\"model_version\"]   = model_resource_name.split(\"/models/\"\
+          )[-1]\n    pred_df[\"pipeline_run_id\"] = pipeline_run_id\n    pred_df[\"\
+          prediction_ts\"]   = now_ts\n\n    # Append predictions\n    table_ref =\
+          \ f\"{project_id}.{bq_dataset}.{predictions_table}\"\n    job_config = bigquery.LoadJobConfig(\n\
+          \        write_disposition=\"WRITE_APPEND\",\n        schema=[\n       \
+          \     bigquery.SchemaField(\"row_id\",          \"STRING\"),\n         \
+          \   bigquery.SchemaField(\"predicted_price\",  \"FLOAT64\"),\n         \
+          \   bigquery.SchemaField(\"model_version\",    \"STRING\"),\n          \
+          \  bigquery.SchemaField(\"pipeline_run_id\",  \"STRING\"),\n           \
+          \ bigquery.SchemaField(\"prediction_ts\",    \"TIMESTAMP\"),\n        ],\n\
+          \    )\n    job = client.load_table_from_dataframe(\n        pred_df[[\"\
+          row_id\", \"predicted_price\", \"model_version\", \"pipeline_run_id\", \"\
+          prediction_ts\"]],\n        table_ref,\n        job_config=job_config,\n\
+          \    )\n    job.result()\n    print(f\"Wrote {len(pred_df)} predictions\
+          \ \u2192 {table_ref}\")\n\n    # Mark rows as processed (prevents re-processing\
+          \ on next run)\n    processed_ref = f\"{project_id}.{bq_dataset}.{processed_table}\"\
+          \n    proc_df = pd.DataFrame({\n        \"row_id\":       pred_df[\"row_id\"\
+          ],\n        \"processed_ts\": now_ts,\n    })\n    proc_job_config = bigquery.LoadJobConfig(\n\
+          \        write_disposition=\"WRITE_APPEND\",\n        schema=[\n       \
+          \     bigquery.SchemaField(\"row_id\",        \"STRING\"),\n           \
+          \ bigquery.SchemaField(\"processed_ts\",  \"TIMESTAMP\"),\n        ],\n\
+          \    )\n    proc_job = client.load_table_from_dataframe(proc_df, processed_ref,\
+          \ job_config=proc_job_config)\n    proc_job.result()\n    print(f\"Marked\
+          \ {len(proc_df)} rows as processed \u2192 {processed_ref}\")\n\n    store_metrics.log_metric(\"\
+          predictions_stored\", len(pred_df))\n    store_metrics.log_metric(\"prediction_table\"\
+          , table_ref)\n\n"
+        image: python:3.10-slim
+    exec-store-predictions-op-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - store_predictions_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery[pandas]==3.25.0'\
+          \ 'pandas==2.2.2' 'pyarrow==15.0.2' 'db-dtypes==1.3.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef store_predictions_op(\n    project_id: str,\n    bq_dataset:\
+          \ str,\n    predictions_table: str,\n    processed_table: str,\n    model_resource_name:\
+          \ str,\n    pipeline_run_id: str,\n    predictions: Input[Dataset],\n  \
+          \  store_metrics: Output[Metrics],\n) -> None:\n    \"\"\"Write predictions\
+          \ to BQ and mark source rows as processed.\"\"\"\n    import pandas as pd\n\
+          \    from google.cloud import bigquery\n\n    client = bigquery.Client(project=project_id)\n\
+          \    pred_df = pd.read_csv(predictions.path + \".csv\")\n\n    # Use pd.Timestamp\
+          \ so pyarrow can convert it to TIMESTAMP natively.\n    # datetime.isoformat()\
+          \ returns a plain string which pyarrow cannot cast.\n    now_ts = pd.Timestamp.utcnow()\n\
+          \    pred_df[\"model_version\"]   = model_resource_name.split(\"/models/\"\
+          )[-1]\n    pred_df[\"pipeline_run_id\"] = pipeline_run_id\n    pred_df[\"\
+          prediction_ts\"]   = now_ts\n\n    # Append predictions\n    table_ref =\
+          \ f\"{project_id}.{bq_dataset}.{predictions_table}\"\n    job_config = bigquery.LoadJobConfig(\n\
+          \        write_disposition=\"WRITE_APPEND\",\n        schema=[\n       \
+          \     bigquery.SchemaField(\"row_id\",          \"STRING\"),\n         \
+          \   bigquery.SchemaField(\"predicted_price\",  \"FLOAT64\"),\n         \
+          \   bigquery.SchemaField(\"model_version\",    \"STRING\"),\n          \
+          \  bigquery.SchemaField(\"pipeline_run_id\",  \"STRING\"),\n           \
+          \ bigquery.SchemaField(\"prediction_ts\",    \"TIMESTAMP\"),\n        ],\n\
+          \    )\n    job = client.load_table_from_dataframe(\n        pred_df[[\"\
+          row_id\", \"predicted_price\", \"model_version\", \"pipeline_run_id\", \"\
+          prediction_ts\"]],\n        table_ref,\n        job_config=job_config,\n\
+          \    )\n    job.result()\n    print(f\"Wrote {len(pred_df)} predictions\
+          \ \u2192 {table_ref}\")\n\n    # Mark rows as processed (prevents re-processing\
+          \ on next run)\n    processed_ref = f\"{project_id}.{bq_dataset}.{processed_table}\"\
+          \n    proc_df = pd.DataFrame({\n        \"row_id\":       pred_df[\"row_id\"\
+          ],\n        \"processed_ts\": now_ts,\n    })\n    proc_job_config = bigquery.LoadJobConfig(\n\
+          \        write_disposition=\"WRITE_APPEND\",\n        schema=[\n       \
+          \     bigquery.SchemaField(\"row_id\",        \"STRING\"),\n           \
+          \ bigquery.SchemaField(\"processed_ts\",  \"TIMESTAMP\"),\n        ],\n\
+          \    )\n    proc_job = client.load_table_from_dataframe(proc_df, processed_ref,\
+          \ job_config=proc_job_config)\n    proc_job.result()\n    print(f\"Marked\
+          \ {len(proc_df)} rows as processed \u2192 {processed_ref}\")\n\n    store_metrics.log_metric(\"\
+          predictions_stored\", len(pred_df))\n    store_metrics.log_metric(\"prediction_table\"\
+          , table_ref)\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: Inference pipeline for used car price prediction. Triggered by new
+    rows in BigQuery. Routes to online or batch prediction based on row count.
+  name: used-car-inference-pipeline
+root:
+  dag:
+    outputs:
+      artifacts:
+        batch-prediction-op-prediction_metrics:
+          artifactSelectors:
+          - outputArtifactKey: batch-prediction-op-prediction_metrics
+            producerSubtask: condition-1
+        check-new-data-op-data_check:
+          artifactSelectors:
+          - outputArtifactKey: data_check
+            producerSubtask: check-new-data-op
+        online-prediction-op-prediction_metrics:
+          artifactSelectors:
+          - outputArtifactKey: online-prediction-op-prediction_metrics
+            producerSubtask: condition-1
+        store-predictions-op-2-store_metrics:
+          artifactSelectors:
+          - outputArtifactKey: store-predictions-op-2-store_metrics
+            producerSubtask: condition-1
+        store-predictions-op-store_metrics:
+          artifactSelectors:
+          - outputArtifactKey: store-predictions-op-store_metrics
+            producerSubtask: condition-1
+    tasks:
+      check-new-data-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-check-new-data-op
+        inputs:
+          parameters:
+            batch_threshold:
+              componentInputParameter: batch_threshold
+            bq_dataset:
+              componentInputParameter: bq_dataset
+            inference_table:
+              componentInputParameter: inference_table
+            processed_table:
+              componentInputParameter: processed_table
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: "1 \xB7 Check New BQ Data"
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - check-new-data-op
+        inputs:
+          artifacts:
+            pipelinechannel--check-new-data-op-new_data:
+              taskOutputArtifact:
+                outputArtifactKey: new_data
+                producerTask: check-new-data-op
+          parameters:
+            pipelinechannel--batch_machine_type:
+              componentInputParameter: batch_machine_type
+            pipelinechannel--batch_max_replicas:
+              componentInputParameter: batch_max_replicas
+            pipelinechannel--batch_starting_replicas:
+              componentInputParameter: batch_starting_replicas
+            pipelinechannel--bq_dataset:
+              componentInputParameter: bq_dataset
+            pipelinechannel--check-new-data-op-inference_mode:
+              taskOutputParameter:
+                outputParameterKey: inference_mode
+                producerTask: check-new-data-op
+            pipelinechannel--check-new-data-op-row_count:
+              taskOutputParameter:
+                outputParameterKey: row_count
+                producerTask: check-new-data-op
+            pipelinechannel--endpoint_id:
+              componentInputParameter: endpoint_id
+            pipelinechannel--model_resource_name:
+              componentInputParameter: model_resource_name
+            pipelinechannel--pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            pipelinechannel--predictions_table:
+              componentInputParameter: predictions_table
+            pipelinechannel--preprocessor_gcs_path:
+              componentInputParameter: preprocessor_gcs_path
+            pipelinechannel--processed_table:
+              componentInputParameter: processed_table
+            pipelinechannel--project_id:
+              componentInputParameter: project_id
+            pipelinechannel--region:
+              componentInputParameter: region
+            pipelinechannel--staging_bucket:
+              componentInputParameter: staging_bucket
+        taskInfo:
+          name: Has new rows
+        triggerPolicy:
+          condition: int(inputs.parameter_values['pipelinechannel--check-new-data-op-row_count'])
+            > 0
+  inputDefinitions:
+    parameters:
+      batch_machine_type:
+        defaultValue: n1-standard-4
+        isOptional: true
+        parameterType: STRING
+      batch_max_replicas:
+        defaultValue: 10.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      batch_starting_replicas:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      batch_threshold:
+        defaultValue: 100.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      bq_dataset:
+        defaultValue: used_car_mlops
+        isOptional: true
+        parameterType: STRING
+      endpoint_id:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      inference_table:
+        defaultValue: car_prices_inference
+        isOptional: true
+        parameterType: STRING
+      model_resource_name:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      pipeline_run_id:
+        defaultValue: manual
+        isOptional: true
+        parameterType: STRING
+      predictions_table:
+        defaultValue: car_predictions
+        isOptional: true
+        parameterType: STRING
+      preprocessor_gcs_path:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      processed_table:
+        defaultValue: car_prices_inference_processed
+        isOptional: true
+        parameterType: STRING
+      project_id:
+        parameterType: STRING
+      region:
+        defaultValue: us-central1
+        isOptional: true
+        parameterType: STRING
+      staging_bucket:
+        defaultValue: gs://<YOUR_PROJECT>-mlops-artifacts
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    artifacts:
+      batch-prediction-op-prediction_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      check-new-data-op-data_check:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      online-prediction-op-prediction_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      store-predictions-op-2-store_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      store-predictions-op-store_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.7.0

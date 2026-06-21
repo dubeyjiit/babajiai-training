@@ -1,0 +1,1553 @@
+# PIPELINE DEFINITION
+# Name: used-car-training-pipeline
+# Description: End-to-end MLOps training pipeline for used car price prediction. Ingests from BigQuery, preprocesses, trains XGBoost, evaluates, registers in Model Registry, and deploys to Staging + Production endpoints.
+# Inputs:
+#    bq_dataset: str [Default: 'used_car_mlops']
+#    bq_test_table: str [Default: 'car_prices_test']
+#    bq_train_table: str [Default: 'car_prices_train']
+#    colsample_bytree: float [Default: 0.8]
+#    experiment_name: str [Default: 'used-car-price-prediction']
+#    learning_rate: float [Default: 0.05]
+#    max_depth: int [Default: 6.0]
+#    min_child_weight: int [Default: 3.0]
+#    model_name: str [Default: 'used-car-price-xgb']
+#    n_estimators: int [Default: 300.0]
+#    pipeline_run_id: str [Default: 'manual']
+#    prod_max_replicas: int [Default: 5.0]
+#    prod_min_replicas: int [Default: 2.0]
+#    project_id: str
+#    promote_to_production: bool [Default: True]
+#    r2_threshold: float [Default: 0.8]
+#    region: str [Default: 'us-central1']
+#    rmse_threshold: float [Default: 4500.0]
+#    serving_container_image: str [Default: 'us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest']
+#    serving_machine_type: str [Default: 'n1-standard-4']
+#    staging_bucket: str [Default: 'gs://<YOUR_PROJECT>-mlops-artifacts']
+#    staging_max_replicas: int [Default: 2.0]
+#    staging_min_replicas: int [Default: 1.0]
+#    subsample: float [Default: 0.8]
+#    vertex_dataset_name: str [Default: 'used-car-prices-dataset']
+# Outputs:
+#    data-preprocessing-op-preprocessing_metrics: system.Metrics
+#    model-evaluation-op-evaluation_metrics: system.Metrics
+#    model-training-op-training_metrics: system.Metrics
+components:
+  comp-condition-1:
+    dag:
+      tasks:
+        condition-2:
+          componentRef:
+            name: comp-condition-2
+          dependentTasks:
+          - model-registry-op
+          - model-serving-op
+          inputs:
+            artifacts:
+              pipelinechannel--model-registry-op-registered_model_info:
+                taskOutputArtifact:
+                  outputArtifactKey: registered_model_info
+                  producerTask: model-registry-op
+            parameters:
+              pipelinechannel--model-evaluation-op-deploy_decision:
+                componentInputParameter: pipelinechannel--model-evaluation-op-deploy_decision
+              pipelinechannel--model-registry-op-model_resource_name:
+                taskOutputParameter:
+                  outputParameterKey: model_resource_name
+                  producerTask: model-registry-op
+              pipelinechannel--prod_max_replicas:
+                componentInputParameter: pipelinechannel--prod_max_replicas
+              pipelinechannel--prod_min_replicas:
+                componentInputParameter: pipelinechannel--prod_min_replicas
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--promote_to_production:
+                componentInputParameter: pipelinechannel--promote_to_production
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--serving_machine_type:
+                componentInputParameter: pipelinechannel--serving_machine_type
+              pipelinechannel--staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: Promote to Production
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--promote_to_production']
+              == true
+        model-registry-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-model-registry-op
+          inputs:
+            artifacts:
+              trained_model:
+                componentInputArtifact: pipelinechannel--model-training-op-trained_model
+            parameters:
+              experiment_name:
+                componentInputParameter: pipelinechannel--experiment_name
+              experiment_run_name:
+                runtimeValue:
+                  constant: run-{{$.inputs.parameters['pipelinechannel--pipeline_run_id']}}
+              model_name:
+                componentInputParameter: pipelinechannel--model_name
+              pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              pipelinechannel--pipeline_run_id:
+                componentInputParameter: pipelinechannel--pipeline_run_id
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              serving_container_image:
+                componentInputParameter: pipelinechannel--serving_container_image
+              staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+              test_r2:
+                componentInputParameter: pipelinechannel--model-evaluation-op-test_r2
+              test_rmse:
+                componentInputParameter: pipelinechannel--model-evaluation-op-test_rmse
+          taskInfo:
+            name: "5 \xB7 Model Registry (versioned)"
+        model-serving-op:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-model-serving-op
+          dependentTasks:
+          - model-registry-op
+          inputs:
+            artifacts:
+              registered_model_info:
+                taskOutputArtifact:
+                  outputArtifactKey: registered_model_info
+                  producerTask: model-registry-op
+            parameters:
+              environment:
+                runtimeValue:
+                  constant: staging
+              machine_type:
+                componentInputParameter: pipelinechannel--serving_machine_type
+              max_replicas:
+                componentInputParameter: pipelinechannel--staging_max_replicas
+              min_replicas:
+                componentInputParameter: pipelinechannel--staging_min_replicas
+              model_resource_name:
+                taskOutputParameter:
+                  outputParameterKey: model_resource_name
+                  producerTask: model-registry-op
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: "6 \xB7 Deploy \u2192 Staging Endpoint"
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--model-training-op-trained_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--experiment_name:
+          parameterType: STRING
+        pipelinechannel--model-evaluation-op-deploy_decision:
+          parameterType: STRING
+        pipelinechannel--model-evaluation-op-test_r2:
+          parameterType: NUMBER_DOUBLE
+        pipelinechannel--model-evaluation-op-test_rmse:
+          parameterType: NUMBER_DOUBLE
+        pipelinechannel--model_name:
+          parameterType: STRING
+        pipelinechannel--pipeline_run_id:
+          parameterType: STRING
+        pipelinechannel--prod_max_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--prod_min_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--promote_to_production:
+          parameterType: BOOLEAN
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image:
+          parameterType: STRING
+        pipelinechannel--serving_machine_type:
+          parameterType: STRING
+        pipelinechannel--staging_bucket:
+          parameterType: STRING
+        pipelinechannel--staging_max_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--staging_min_replicas:
+          parameterType: NUMBER_INTEGER
+  comp-condition-2:
+    dag:
+      tasks:
+        model-serving-op-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-model-serving-op-2
+          inputs:
+            artifacts:
+              registered_model_info:
+                componentInputArtifact: pipelinechannel--model-registry-op-registered_model_info
+            parameters:
+              environment:
+                runtimeValue:
+                  constant: production
+              machine_type:
+                componentInputParameter: pipelinechannel--serving_machine_type
+              max_replicas:
+                componentInputParameter: pipelinechannel--prod_max_replicas
+              min_replicas:
+                componentInputParameter: pipelinechannel--prod_min_replicas
+              model_resource_name:
+                componentInputParameter: pipelinechannel--model-registry-op-model_resource_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              staging_bucket:
+                componentInputParameter: pipelinechannel--staging_bucket
+          taskInfo:
+            name: "7 \xB7 Deploy \u2192 Production Endpoint"
+    inputDefinitions:
+      artifacts:
+        pipelinechannel--model-registry-op-registered_model_info:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        pipelinechannel--model-evaluation-op-deploy_decision:
+          parameterType: STRING
+        pipelinechannel--model-registry-op-model_resource_name:
+          parameterType: STRING
+        pipelinechannel--prod_max_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--prod_min_replicas:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--promote_to_production:
+          parameterType: BOOLEAN
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_machine_type:
+          parameterType: STRING
+        pipelinechannel--staging_bucket:
+          parameterType: STRING
+  comp-data-ingestion-op:
+    executorLabel: exec-data-ingestion-op
+    inputDefinitions:
+      parameters:
+        bq_dataset:
+          parameterType: STRING
+        bq_test_table:
+          parameterType: STRING
+        bq_train_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+        vertex_dataset_name:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        vertex_dataset_resource_name:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-data-preprocessing-op:
+    executorLabel: exec-data-preprocessing-op
+    inputDefinitions:
+      artifacts:
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        experiment_name:
+          parameterType: STRING
+        experiment_run_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        preprocessed_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        preprocessed_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        preprocessing_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        preprocessor_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-model-evaluation-op:
+    executorLabel: exec-model-evaluation-op
+    inputDefinitions:
+      artifacts:
+        feature_importance_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        preprocessed_test:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        trained_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        experiment_name:
+          parameterType: STRING
+        experiment_run_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        r2_threshold:
+          parameterType: NUMBER_DOUBLE
+        region:
+          parameterType: STRING
+        rmse_threshold:
+          parameterType: NUMBER_DOUBLE
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        evaluation_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+      parameters:
+        deploy_decision:
+          parameterType: STRING
+        test_r2:
+          parameterType: NUMBER_DOUBLE
+        test_rmse:
+          parameterType: NUMBER_DOUBLE
+  comp-model-registry-op:
+    executorLabel: exec-model-registry-op
+    inputDefinitions:
+      artifacts:
+        trained_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        experiment_name:
+          parameterType: STRING
+        experiment_run_name:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        pipeline_run_id:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        serving_container_image:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+        test_r2:
+          parameterType: NUMBER_DOUBLE
+        test_rmse:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        registered_model_info:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        model_resource_name:
+          parameterType: STRING
+        model_version_id:
+          parameterType: STRING
+  comp-model-serving-op:
+    executorLabel: exec-model-serving-op
+    inputDefinitions:
+      artifacts:
+        registered_model_info:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        environment:
+          parameterType: STRING
+        machine_type:
+          parameterType: STRING
+        max_replicas:
+          parameterType: NUMBER_INTEGER
+        min_replicas:
+          parameterType: NUMBER_INTEGER
+        model_resource_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        endpoint_id:
+          parameterType: STRING
+        endpoint_resource_name:
+          parameterType: STRING
+  comp-model-serving-op-2:
+    executorLabel: exec-model-serving-op-2
+    inputDefinitions:
+      artifacts:
+        registered_model_info:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+      parameters:
+        environment:
+          parameterType: STRING
+        machine_type:
+          parameterType: STRING
+        max_replicas:
+          parameterType: NUMBER_INTEGER
+        min_replicas:
+          parameterType: NUMBER_INTEGER
+        model_resource_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        endpoint_id:
+          parameterType: STRING
+        endpoint_resource_name:
+          parameterType: STRING
+  comp-model-training-op:
+    executorLabel: exec-model-training-op
+    inputDefinitions:
+      artifacts:
+        preprocessed_train:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        preprocessor_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        colsample_bytree:
+          parameterType: NUMBER_DOUBLE
+        experiment_name:
+          parameterType: STRING
+        experiment_run_name:
+          parameterType: STRING
+        learning_rate:
+          parameterType: NUMBER_DOUBLE
+        max_depth:
+          parameterType: NUMBER_INTEGER
+        min_child_weight:
+          parameterType: NUMBER_INTEGER
+        n_estimators:
+          parameterType: NUMBER_INTEGER
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        staging_bucket:
+          parameterType: STRING
+        subsample:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        feature_importance:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+        trained_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        training_metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-data-ingestion-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - data_ingestion_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery[pandas]==3.25.0'\
+          \ 'google-cloud-aiplatform==1.60.0' 'google-cloud-storage==2.17.0' 'pandas==2.2.2'\
+          \ 'db-dtypes==1.3.0' 'pyarrow==15.0.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef data_ingestion_op(\n    project_id: str,\n    region: str,\n\
+          \    bq_dataset: str,\n    bq_train_table: str,\n    bq_test_table: str,\n\
+          \    vertex_dataset_name: str,\n    staging_bucket: str,\n    train_data:\
+          \ Output[Dataset],\n    test_data: Output[Dataset],\n    vertex_dataset_resource_name:\
+          \ Output[Artifact],\n) -> None:\n    import json\n    import pandas as pd\n\
+          \    from google.cloud import bigquery, storage\n    import google.cloud.aiplatform\
+          \ as aip\n\n    aip.init(project=project_id, location=region, staging_bucket=staging_bucket)\n\
+          \    bq_client  = bigquery.Client(project=project_id)\n    gcs_client =\
+          \ storage.Client(project=project_id)\n\n    def _bq_to_df(table: str) ->\
+          \ pd.DataFrame:\n        query = f\"SELECT * FROM `{project_id}.{bq_dataset}.{table}`\"\
+          \n        print(f\"  Running: {query}\")\n        df = bq_client.query(query).to_dataframe()\n\
+          \        print(f\"  \u2192 {len(df):,} rows, columns: {df.columns.tolist()}\"\
+          )\n        return df\n\n    train_df = _bq_to_df(bq_train_table)\n    test_df\
+          \ = _bq_to_df(bq_test_table)\n\n    train_df.to_csv(train_data.path + \"\
+          .csv\", index=False)\n    test_df.to_csv(test_data.path   + \".csv\", index=False)\n\
+          \    print(f\"Train artifact written: {train_data.path}.csv\")\n    print(f\"\
+          Test  artifact written: {test_data.path}.csv\")\n\n    bucket_name  = staging_bucket.replace(\"\
+          gs://\", \"\").split(\"/\")[0]\n    gcs_train_uri = f\"{staging_bucket}/data/train/{bq_train_table}.csv\"\
+          \n    gcs_test_uri  = f\"{staging_bucket}/data/test/{bq_test_table}.csv\"\
+          \n\n    def _gcs_blob_path(gcs_uri: str) -> str:\n        return \"/\".join(gcs_uri.replace(\"\
+          gs://\", \"\").split(\"/\")[1:])\n\n    bucket = gcs_client.bucket(bucket_name)\n\
+          \    bucket.blob(_gcs_blob_path(gcs_train_uri)).upload_from_string(\n  \
+          \      train_df.to_csv(index=False), content_type=\"text/csv\"\n    )\n\
+          \    bucket.blob(_gcs_blob_path(gcs_test_uri)).upload_from_string(\n   \
+          \     test_df.to_csv(index=False), content_type=\"text/csv\"\n    )\n  \
+          \  print(f\"Uploaded train CSV \u2192 {gcs_train_uri}\")\n    print(f\"\
+          Uploaded test  CSV \u2192 {gcs_test_uri}\")\n\n    # Register Vertex AI\
+          \ Tabular Dataset\n    # Visible in Agent Platform \u2192 Datasets\n   \
+          \ dataset_resource_name = \"\"\n    try:\n        existing = aip.TabularDataset.list(\n\
+          \            filter=f'display_name=\"{vertex_dataset_name}\"',\n       \
+          \     project=project_id,\n            location=region,\n        )\n   \
+          \     if existing:\n            dataset_resource_name = existing[0].resource_name\n\
+          \            print(f\"  Reusing existing dataset: {dataset_resource_name}\"\
+          )\n        else:\n            ds = aip.TabularDataset.create(\n        \
+          \        display_name=vertex_dataset_name,\n                gcs_source=gcs_train_uri,\n\
+          \            )\n            dataset_resource_name = ds.resource_name\n \
+          \           print(f\"  Created dataset: {dataset_resource_name}\")\n   \
+          \ except Exception as e:\n        print(f\"  WARNING: Could not register\
+          \ Vertex AI Dataset (non-fatal): {e}\")\n        dataset_resource_name =\
+          \ \"registration-failed\"\n\n    with open(vertex_dataset_resource_name.path,\
+          \ \"w\") as f:\n        json.dump({\n            \"resource_name\": dataset_resource_name,\n\
+          \            \"gcs_train_uri\": gcs_train_uri,\n            \"gcs_test_uri\"\
+          :  gcs_test_uri,\n        }, f)\n\n    print(\"=== Data ingestion complete\
+          \ ===\")\n\n"
+        image: python:3.10-slim
+        resources:
+          cpuLimit: 2.0
+          memoryLimit: 8.0
+    exec-data-preprocessing-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - data_preprocessing_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'scikit-learn==1.4.2'\
+          \ 'pandas==2.2.2' 'numpy==1.26.4' 'joblib==1.4.2' 'google-cloud-aiplatform==1.60.0'\
+          \ 'google-cloud-storage==2.17.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef data_preprocessing_op(\n    project_id: str,\n    region: str,\n\
+          \    experiment_name: str,\n    experiment_run_name: str,\n    staging_bucket:\
+          \ str,\n    train_data: Input[Dataset],\n    test_data: Input[Dataset],\n\
+          \    preprocessed_train: Output[Dataset],\n    preprocessed_test: Output[Dataset],\n\
+          \    preprocessor_artifact: Output[Model],\n    preprocessing_metrics: Output[Metrics],\n\
+          ) -> None:\n    \"\"\"Fit a ColumnTransformer on train, transform train+test,\
+          \ log statistics.\"\"\"\n    import joblib\n    import pandas as pd\n  \
+          \  from sklearn.compose import ColumnTransformer\n    from sklearn.pipeline\
+          \ import Pipeline\n    from sklearn.preprocessing import StandardScaler,\
+          \ OrdinalEncoder\n    from sklearn.impute import SimpleImputer\n    import\
+          \ google.cloud.aiplatform as aip\n\n    aip.init(\n        project=project_id,\n\
+          \        location=region,\n        staging_bucket=staging_bucket,\n    \
+          \    experiment=experiment_name,\n    )\n\n    NUMERIC_FEATURES = [\"year\"\
+          , \"mileage\", \"engine_size\", \"horsepower\",\n                      \
+          \  \"accident_count\", \"num_owners\"]\n    CATEGORICAL_FEATURES = [\"fuel_type\"\
+          , \"transmission\", \"brand\", \"condition\"]\n    TARGET = \"price\"\n\n\
+          \    print(\"=== Loading datasets ===\")\n    train_df = pd.read_csv(train_data.path\
+          \ + \".csv\")\n    test_df  = pd.read_csv(test_data.path  + \".csv\")\n\
+          \    print(f\"Train shape: {train_df.shape}, Test shape: {test_df.shape}\"\
+          )\n\n    # \u2500\u2500 Feature engineering \u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n   \
+          \ for df in [train_df, test_df]:\n        df[\"car_age\"] = 2024 - df[\"\
+          year\"]\n        df[\"mileage_per_year\"] = df[\"mileage\"] / (df[\"car_age\"\
+          ].replace(0, 1))\n        df[\"hp_per_liter\"] = df[\"horsepower\"] / df[\"\
+          engine_size\"]\n\n    NUMERIC_FEATURES = NUMERIC_FEATURES + [\"car_age\"\
+          , \"mileage_per_year\", \"hp_per_liter\"]\n\n    # \u2500\u2500 Build preprocessor\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\n    numeric_pipeline = Pipeline([\n    \
+          \    (\"imputer\", SimpleImputer(strategy=\"median\")),\n        (\"scaler\"\
+          ,  StandardScaler()),\n    ])\n    categorical_pipeline = Pipeline([\n \
+          \       (\"imputer\", SimpleImputer(strategy=\"most_frequent\")),\n    \
+          \    (\"encoder\", OrdinalEncoder(handle_unknown=\"use_encoded_value\",\
+          \ unknown_value=-1)),\n    ])\n    preprocessor = ColumnTransformer(transformers=[\n\
+          \        (\"num\", numeric_pipeline,       NUMERIC_FEATURES),\n        (\"\
+          cat\", categorical_pipeline,   CATEGORICAL_FEATURES),\n    ], remainder=\"\
+          drop\")\n\n    # \u2500\u2500 Fit on train, transform both \u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\n    X_train = train_df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]\n\
+          \    y_train = train_df[TARGET]\n    X_test  = test_df[NUMERIC_FEATURES\
+          \ + CATEGORICAL_FEATURES]\n    y_test  = test_df[TARGET]\n\n    X_train_t\
+          \ = preprocessor.fit_transform(X_train)\n    X_test_t  = preprocessor.transform(X_test)\n\
+          \n    feature_names = (\n        NUMERIC_FEATURES\n        + CATEGORICAL_FEATURES\n\
+          \    )\n\n    train_out = pd.DataFrame(X_train_t, columns=feature_names)\n\
+          \    train_out[TARGET] = y_train.values\n    test_out  = pd.DataFrame(X_test_t,\
+          \  columns=feature_names)\n    test_out[TARGET]  = y_test.values\n\n   \
+          \ train_out.to_csv(preprocessed_train.path + \".csv\", index=False)\n  \
+          \  test_out.to_csv(preprocessed_test.path   + \".csv\", index=False)\n\n\
+          \    # \u2500\u2500 Save fitted preprocessor \u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\n    preprocessor_path = preprocessor_artifact.path\
+          \ + \".pkl\"\n    meta = {\n        \"numeric_features\":     NUMERIC_FEATURES,\n\
+          \        \"categorical_features\": CATEGORICAL_FEATURES,\n        \"target\"\
+          :               TARGET,\n        \"feature_names\":        feature_names,\n\
+          \    }\n    joblib.dump({\"preprocessor\": preprocessor, \"meta\": meta},\
+          \ preprocessor_path)\n    print(f\"Preprocessor saved \u2192 {preprocessor_path}\"\
+          )\n\n    # \u2500\u2500 Also copy preprocessor to a FIXED well-known GCS\
+          \ path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\n    # The KFP artifact path contains\
+          \ a run-specific hash; this fixed path lets\n    # the inference pipeline\
+          \ and Cloud Function always find the latest preprocessor.\n    fixed_gcs_path\
+          \ = f\"{staging_bucket}/models/latest/preprocessor.pkl\"\n    try:\n   \
+          \     from google.cloud import storage as gcs\n        bucket_name = staging_bucket.replace(\"\
+          gs://\", \"\").split(\"/\")[0]\n        blob_path   = \"/\".join(fixed_gcs_path.replace(\"\
+          gs://\", \"\").split(\"/\")[1:])\n        gcs_client  = gcs.Client(project=project_id)\n\
+          \        gcs_client.bucket(bucket_name).blob(blob_path).upload_from_filename(preprocessor_path)\n\
+          \        print(f\"Preprocessor also uploaded \u2192 {fixed_gcs_path}\")\n\
+          \    except Exception as e:\n        print(f\"WARNING: Could not upload\
+          \ preprocessor to fixed path (non-fatal): {e}\")\n\n    # \u2500\u2500 Log\
+          \ metrics to Vertex AI Experiments \u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\n    stats = {\n        \"train_rows\":       int(len(train_df)),\n\
+          \        \"test_rows\":        int(len(test_df)),\n        \"num_features\"\
+          :     len(NUMERIC_FEATURES),\n        \"cat_features\":     len(CATEGORICAL_FEATURES),\n\
+          \        \"target_mean_train\": float(y_train.mean()),\n        \"target_std_train\"\
+          :  float(y_train.std()),\n        \"target_min_train\":  float(y_train.min()),\n\
+          \        \"target_max_train\":  float(y_train.max()),\n        \"missing_pct_train\"\
+          : float(train_df.isnull().sum().sum() / train_df.size * 100),\n    }\n \
+          \   # Log to KFP metrics artifact\n    for k, v in stats.items():\n    \
+          \    preprocessing_metrics.log_metric(k, v)\n\n    print(\"Preprocessing\
+          \ statistics:\")\n    for k, v in stats.items():\n        print(f\"  {k}:\
+          \ {v}\")\n\n    print(\"=== Preprocessing complete ===\")\n\n"
+        image: python:3.10-slim
+        resources:
+          cpuLimit: 4.0
+          memoryLimit: 16.0
+    exec-model-evaluation-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_evaluation_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'scikit-learn==1.4.2'\
+          \ 'xgboost==2.0.3' 'pandas==2.2.2' 'numpy==1.26.4' 'joblib==1.4.2' 'google-cloud-aiplatform==1.60.0'\
+          \ 'matplotlib==3.9.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_evaluation_op(\n    project_id: str,\n    region: str,\n\
+          \    staging_bucket: str,\n    experiment_name: str,\n    experiment_run_name:\
+          \ str,\n    rmse_threshold: float,\n    r2_threshold: float,\n    trained_model:\
+          \ Input[Model],\n    preprocessed_test: Input[Dataset],\n    feature_importance_artifact:\
+          \ Input[Model],\n    evaluation_metrics: Output[Metrics],\n) -> NamedTuple(\"\
+          EvalOutputs\", [(\"deploy_decision\", str), (\"test_rmse\", float), (\"\
+          test_r2\", float)]):\n    \"\"\"Evaluate model on test set, gate deployment,\
+          \ log to Vertex AI Metadata.\"\"\"\n    import uuid\n    import joblib\n\
+          \    import numpy as np\n    import pandas as pd\n    from sklearn.metrics\
+          \ import (\n        mean_squared_error, mean_absolute_error, r2_score,\n\
+          \        mean_absolute_percentage_error,\n    )\n    import google.cloud.aiplatform\
+          \ as aip\n    from collections import namedtuple\n\n    aip.init(\n    \
+          \    project=project_id,\n        location=region,\n        staging_bucket=staging_bucket,\n\
+          \        experiment=experiment_name,\n    )\n\n    TARGET = \"price\"\n\n\
+          \    print(\"=== Loading model and test data ===\")\n    pipeline = joblib.load(trained_model.path\
+          \ + \".pkl\")\n    test_df  = pd.read_csv(preprocessed_test.path + \".csv\"\
+          )\n\n    X_test = test_df.drop(columns=[TARGET])\n    y_test = test_df[TARGET]\n\
+          \n    print(f\"Evaluating on {len(X_test):,} test rows\")\n\n    # \u2500\
+          \u2500 Predictions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\n    # The pipeline includes preprocessor, so we need\
+          \ raw features\n    # But preprocessed_test already has transformed features\
+          \ \u2192 use model directly\n    model = pipeline.named_steps[\"model\"\
+          ]\n    y_pred = model.predict(X_test.values)\n\n    # \u2500\u2500 Regression\
+          \ metrics \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\n    rmse  = float(np.sqrt(mean_squared_error(y_test,\
+          \ y_pred)))\n    mae   = float(mean_absolute_error(y_test, y_pred))\n  \
+          \  r2    = float(r2_score(y_test, y_pred))\n    mape  = float(mean_absolute_percentage_error(y_test,\
+          \ y_pred)) * 100\n    # Residuals\n    residuals = y_pred - y_test.values\n\
+          \    mean_resid = float(residuals.mean())\n    std_resid  = float(residuals.std())\n\
+          \n    # Price bucket accuracy (within \xB1$2000)\n    within_2k = float(np.mean(np.abs(residuals)\
+          \ <= 2_000) * 100)\n\n    metrics = {\n        \"test_rmse\":          \
+          \    rmse,\n        \"test_mae\":               mae,\n        \"test_r2\"\
+          :                r2,\n        \"test_mape_pct\":          round(mape, 2),\n\
+          \        \"test_mean_residual\":     round(mean_resid, 2),\n        \"test_std_residual\"\
+          :      round(std_resid, 2),\n        \"test_within_2k_pct\":     round(within_2k,\
+          \ 2),\n        \"rmse_threshold\":         rmse_threshold,\n        \"r2_threshold\"\
+          :           r2_threshold,\n    }\n\n    print(\"\\n=== Evaluation metrics\
+          \ ===\")\n    for k, v in metrics.items():\n        print(f\"  {k}: {v}\"\
+          )\n        evaluation_metrics.log_metric(k, v)\n\n    # \u2500\u2500 Deployment\
+          \ gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    passes_rmse\
+          \ = rmse <= rmse_threshold\n    passes_r2   = r2   >= r2_threshold\n   \
+          \ deploy_decision = \"deploy\" if (passes_rmse and passes_r2) else \"reject\"\
+          \n\n    print(\"\\n=== Deployment gate ===\")\n    print(f\"  RMSE {rmse:.0f}\
+          \ <= threshold {rmse_threshold:.0f}: {passes_rmse}\")\n    print(f\"  R\xB2\
+          \   {r2:.3f} >= threshold {r2_threshold:.3f}: {passes_r2}\")\n    print(f\"\
+          \  Decision: {deploy_decision.upper()}\")\n\n    evaluation_metrics.log_metric(\"\
+          deploy_decision\", deploy_decision)\n\n    # \u2500\u2500 Log to Vertex\
+          \ AI Experiment Run \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\n    # Unique suffix prevents AlreadyExists\
+          \ 409 on component retries.\n    unique_run_name = f\"{experiment_run_name}-eval-{uuid.uuid4().hex[:6]}\"\
+          \n    print(f\"Experiment run name: {unique_run_name}\")\n    with aip.start_run(unique_run_name):\n\
+          \        aip.log_metrics({k: v for k, v in metrics.items() if isinstance(v,\
+          \ (int, float))})\n        aip.log_params({\"deploy_decision\": deploy_decision})\n\
+          \n    EvalOutputs = namedtuple(\"EvalOutputs\", [\"deploy_decision\", \"\
+          test_rmse\", \"test_r2\"])\n    return EvalOutputs(\n        deploy_decision=deploy_decision,\n\
+          \        test_rmse=round(rmse, 2),\n        test_r2=round(r2, 4),\n    )\n\
+          \n"
+        image: python:3.10-slim
+    exec-model-registry-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_registry_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform==1.60.0'\
+          \ 'google-cloud-storage==2.17.0' 'scikit-learn==1.4.2' 'xgboost==2.0.3'\
+          \ 'joblib==1.4.2' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_registry_op(\n    project_id: str,\n    region: str,\n\
+          \    staging_bucket: str,\n    model_name: str,\n    serving_container_image:\
+          \ str,\n    experiment_name: str,\n    experiment_run_name: str,\n    pipeline_run_id:\
+          \ str,\n    test_rmse: float,\n    test_r2: float,\n    trained_model: Input[Model],\n\
+          \    registered_model_info: Output[Artifact],\n) -> NamedTuple(\"RegistryOutputs\"\
+          , [(\"model_resource_name\", str), (\"model_version_id\", str)]):\n    \"\
+          \"\"Upload model artifact to GCS, register in Vertex AI Model Registry with\
+          \ metadata.\"\"\"\n    import json\n    import uuid\n    import google.cloud.aiplatform\
+          \ as aip\n    from google.cloud import storage\n    from collections import\
+          \ namedtuple\n\n    aip.init(project=project_id, location=region, staging_bucket=staging_bucket,\n\
+          \             experiment=experiment_name)\n\n    # \u2500\u2500 Copy model\
+          \ artifact to GCS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \n    # Vertex AI expects model.pkl at gs://<bucket>/model/model.pkl\n \
+          \   bucket_name = staging_bucket.replace(\"gs://\", \"\").split(\"/\")[0]\n\
+          \    gcs_model_dir = f\"models/{experiment_run_name}\"\n    gcs_client =\
+          \ storage.Client(project=project_id)\n    bucket = gcs_client.bucket(bucket_name)\n\
+          \n    local_model_path = trained_model.path + \".pkl\"\n    gcs_model_blob\
+          \ = f\"{gcs_model_dir}/model.pkl\"\n    bucket.blob(gcs_model_blob).upload_from_filename(local_model_path)\n\
+          \    gcs_model_uri = f\"gs://{bucket_name}/{gcs_model_dir}\"\n    print(f\"\
+          Model artifact uploaded \u2192 {gcs_model_uri}\")\n\n    # \u2500\u2500\
+          \ Register model / create new version \u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\n    # Check if a model with this name already\
+          \ exists\n    existing_models = aip.Model.list(\n        filter=f'displayName=\"\
+          {model_name}\"',\n        project=project_id,\n        location=region,\n\
+          \    )\n\n    labels = {\n        \"experiment\":    experiment_name[:63].replace(\"\
+          \ \", \"-\").lower(),\n        \"pipeline_run\":  pipeline_run_id[:63].replace(\"\
+          \ \", \"-\").lower()[:63],\n        \"framework\":     \"xgboost\",\n  \
+          \      \"task\":          \"regression\",\n    }\n\n    model_description\
+          \ = (\n        f\"Used car price prediction \u2014 XGBoost. \"\n       \
+          \ f\"Run: {experiment_run_name} | RMSE: {test_rmse:.0f} | R\xB2: {test_r2:.4f}\"\
+          \n    )\n\n    # Pre-built sklearn containers already define /predict +\
+          \ /ping routes internally.\n    # Specifying serving_container_health_route\
+          \ here overrides to a wrong path and\n    # causes health checks to fail\
+          \ during endpoint.deploy(). Leave routes unset.\n    if existing_models:\n\
+          \        # Upload as a new version of the existing model\n        parent_model\
+          \ = existing_models[0].resource_name\n        print(f\"Registering new version\
+          \ under existing model: {parent_model}\")\n        model = aip.Model.upload(\n\
+          \            display_name=model_name,\n            artifact_uri=gcs_model_uri,\n\
+          \            serving_container_image_uri=serving_container_image,\n    \
+          \        description=model_description,\n            labels=labels,\n  \
+          \          parent_model=parent_model,          # \u2190 creates a new version\n\
+          \            is_default_version=True,\n        )\n    else:\n        print(f\"\
+          No existing model found. Registering as new model: {model_name}\")\n   \
+          \     model = aip.Model.upload(\n            display_name=model_name,\n\
+          \            artifact_uri=gcs_model_uri,\n            serving_container_image_uri=serving_container_image,\n\
+          \            description=model_description,\n            labels=labels,\n\
+          \        )\n\n    model_resource_name = model.resource_name\n    # Version\
+          \ ID is the last segment of the version resource name\n    # resource_name\
+          \ format: projects/.../models/<model_id>\n    model_id = model_resource_name.split(\"\
+          /models/\")[-1]\n    # Fetch version details\n    version_id = getattr(model,\
+          \ \"version_id\", \"1\")\n\n    print(f\"Model registered: {model_resource_name}\"\
+          )\n    print(f\"Version ID:       {version_id}\")\n\n    # \u2500\u2500\
+          \ Write ML Metadata (visible in Agent Platform \u2192 Metadata) \u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \n    info = {\n        \"model_resource_name\":  model_resource_name,\n\
+          \        \"model_id\":             model_id,\n        \"version_id\":  \
+          \         version_id,\n        \"gcs_artifact_uri\":     gcs_model_uri,\n\
+          \        \"display_name\":         model_name,\n        \"experiment_run_name\"\
+          :  experiment_run_name,\n        \"test_rmse\":            test_rmse,\n\
+          \        \"test_r2\":              test_r2,\n        \"serving_container\"\
+          :    serving_container_image,\n    }\n    with open(registered_model_info.path\
+          \ + \".json\", \"w\") as f:\n        json.dump(info, f, indent=2)\n\n  \
+          \  # Log lineage via Vertex AI Experiment\n    unique_run_name = f\"{experiment_run_name}-reg-{uuid.uuid4().hex[:6]}\"\
+          \n    print(f\"Experiment run name: {unique_run_name}\")\n    with aip.start_run(unique_run_name):\n\
+          \        aip.log_params({\n            \"model_resource_name\": model_resource_name,\n\
+          \            \"model_version_id\":    version_id,\n            \"gcs_artifact_uri\"\
+          :    gcs_model_uri,\n        })\n\n    print(\"=== Model Registry complete\
+          \ ===\")\n    RegistryOutputs = namedtuple(\"RegistryOutputs\", [\"model_resource_name\"\
+          , \"model_version_id\"])\n    return RegistryOutputs(model_resource_name=model_resource_name,\
+          \ model_version_id=str(version_id))\n\n"
+        image: python:3.10-slim
+    exec-model-serving-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_serving_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform==1.60.0'\
+          \ 'urllib3<2.0.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_serving_op(\n    project_id: str,\n    region: str,\n \
+          \   staging_bucket: str,\n    environment: str,                     # 'staging'\
+          \ or 'production'\n    machine_type: str,\n    min_replicas: int,\n    max_replicas:\
+          \ int,\n    model_resource_name: str,             # Vertex AI model resource\
+          \ name\n    registered_model_info: Input[Artifact],\n) -> NamedTuple(\"\
+          ServingOutputs\", [(\"endpoint_resource_name\", str), (\"endpoint_id\",\
+          \ str)]):\n    \"\"\"Create or reuse a Vertex AI Endpoint and deploy the\
+          \ model.\"\"\"\n    import traceback\n    import google.cloud.aiplatform\
+          \ as aip\n    from collections import namedtuple\n\n    aip.init(project=project_id,\
+          \ location=region, staging_bucket=staging_bucket)\n\n    env = environment.lower()\n\
+          \    assert env in (\"staging\", \"production\"), f\"Unknown environment:\
+          \ {env}\"\n\n    endpoint_display_name = f\"used-car-{env}-endpoint\"\n\
+          \    deployed_model_display_name = f\"used-car-xgb-{env}\"\n\n    print(f\"\
+          === Deploying to {env.upper()} environment ===\")\n    print(f\"  Model\
+          \ resource:  {model_resource_name}\")\n    print(f\"  Endpoint name:   {endpoint_display_name}\"\
+          )\n    print(f\"  Machine type:    {machine_type}\")\n    print(f\"  Replicas:\
+          \        {min_replicas}-{max_replicas}\")\n\n    # \u2500\u2500 Resolve\
+          \ model object \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\n    print(\"  Fetching model object...\"\
+          )\n    model = aip.Model(model_resource_name)\n    print(f\"  Model display\
+          \ name: {model.display_name}\")\n\n    # \u2500\u2500 Get or create endpoint\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\n    print(f\"  Looking up endpoint '{endpoint_display_name}'...\"\
+          )\n    existing_endpoints = aip.Endpoint.list(\n        filter=f'display_name=\"\
+          {endpoint_display_name}\"',\n        project=project_id,\n        location=region,\n\
+          \    )\n\n    if existing_endpoints:\n        endpoint = existing_endpoints[0]\n\
+          \        print(f\"  Reusing existing endpoint: {endpoint.resource_name}\"\
+          )\n        deployed = endpoint.list_models()\n        for dm in deployed:\n\
+          \            print(f\"  Undeploying existing model: {dm.id}\")\n       \
+          \     try:\n                endpoint.undeploy(deployed_model_id=dm.id, sync=True)\n\
+          \            except Exception as e:\n                print(f\"  WARNING:\
+          \ undeploy failed (non-fatal): {e}\")\n    else:\n        print(\"  Creating\
+          \ new endpoint...\")\n        endpoint = aip.Endpoint.create(\n        \
+          \    display_name=endpoint_display_name,\n            project=project_id,\n\
+          \            location=region,\n            labels={\"environment\": env,\
+          \ \"use_case\": \"used-car-price\"},\n        )\n        print(f\"  Created\
+          \ endpoint: {endpoint.resource_name}\")\n\n    # \u2500\u2500 Deploy model\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n   \
+          \ print(\"  Starting deploy (sync=True, this blocks until healthy)...\"\
+          )\n    try:\n        endpoint.deploy(\n            model=model,\n      \
+          \      deployed_model_display_name=deployed_model_display_name,\n      \
+          \      machine_type=machine_type,\n            min_replica_count=min_replicas,\n\
+          \            max_replica_count=max_replicas,\n            traffic_percentage=100,\n\
+          \            sync=True,\n        )\n    except Exception as deploy_err:\n\
+          \        print(\"\\n!!! endpoint.deploy() FAILED \u2014 full traceback below\
+          \ !!!\")\n        traceback.print_exc()\n        raise RuntimeError(\n \
+          \           f\"endpoint.deploy() failed for {env} endpoint: {deploy_err}\"\
+          \n        ) from deploy_err\n\n    endpoint_resource_name = endpoint.resource_name\n\
+          \    endpoint_id = endpoint_resource_name.split(\"/endpoints/\")[-1]\n\n\
+          \    print(f\"\\n  Endpoint resource name: {endpoint_resource_name}\")\n\
+          \    print(f\"  Endpoint ID:            {endpoint_id}\")\n    print(f\"\
+          === Model deployed to {env.upper()} ===\")\n\n    ServingOutputs = namedtuple(\"\
+          ServingOutputs\", [\"endpoint_resource_name\", \"endpoint_id\"])\n    return\
+          \ ServingOutputs(\n        endpoint_resource_name=endpoint_resource_name,\n\
+          \        endpoint_id=endpoint_id,\n    )\n\n"
+        image: python:3.10-slim
+    exec-model-serving-op-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_serving_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform==1.60.0'\
+          \ 'urllib3<2.0.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_serving_op(\n    project_id: str,\n    region: str,\n \
+          \   staging_bucket: str,\n    environment: str,                     # 'staging'\
+          \ or 'production'\n    machine_type: str,\n    min_replicas: int,\n    max_replicas:\
+          \ int,\n    model_resource_name: str,             # Vertex AI model resource\
+          \ name\n    registered_model_info: Input[Artifact],\n) -> NamedTuple(\"\
+          ServingOutputs\", [(\"endpoint_resource_name\", str), (\"endpoint_id\",\
+          \ str)]):\n    \"\"\"Create or reuse a Vertex AI Endpoint and deploy the\
+          \ model.\"\"\"\n    import traceback\n    import google.cloud.aiplatform\
+          \ as aip\n    from collections import namedtuple\n\n    aip.init(project=project_id,\
+          \ location=region, staging_bucket=staging_bucket)\n\n    env = environment.lower()\n\
+          \    assert env in (\"staging\", \"production\"), f\"Unknown environment:\
+          \ {env}\"\n\n    endpoint_display_name = f\"used-car-{env}-endpoint\"\n\
+          \    deployed_model_display_name = f\"used-car-xgb-{env}\"\n\n    print(f\"\
+          === Deploying to {env.upper()} environment ===\")\n    print(f\"  Model\
+          \ resource:  {model_resource_name}\")\n    print(f\"  Endpoint name:   {endpoint_display_name}\"\
+          )\n    print(f\"  Machine type:    {machine_type}\")\n    print(f\"  Replicas:\
+          \        {min_replicas}-{max_replicas}\")\n\n    # \u2500\u2500 Resolve\
+          \ model object \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\n    print(\"  Fetching model object...\"\
+          )\n    model = aip.Model(model_resource_name)\n    print(f\"  Model display\
+          \ name: {model.display_name}\")\n\n    # \u2500\u2500 Get or create endpoint\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\n    print(f\"  Looking up endpoint '{endpoint_display_name}'...\"\
+          )\n    existing_endpoints = aip.Endpoint.list(\n        filter=f'display_name=\"\
+          {endpoint_display_name}\"',\n        project=project_id,\n        location=region,\n\
+          \    )\n\n    if existing_endpoints:\n        endpoint = existing_endpoints[0]\n\
+          \        print(f\"  Reusing existing endpoint: {endpoint.resource_name}\"\
+          )\n        deployed = endpoint.list_models()\n        for dm in deployed:\n\
+          \            print(f\"  Undeploying existing model: {dm.id}\")\n       \
+          \     try:\n                endpoint.undeploy(deployed_model_id=dm.id, sync=True)\n\
+          \            except Exception as e:\n                print(f\"  WARNING:\
+          \ undeploy failed (non-fatal): {e}\")\n    else:\n        print(\"  Creating\
+          \ new endpoint...\")\n        endpoint = aip.Endpoint.create(\n        \
+          \    display_name=endpoint_display_name,\n            project=project_id,\n\
+          \            location=region,\n            labels={\"environment\": env,\
+          \ \"use_case\": \"used-car-price\"},\n        )\n        print(f\"  Created\
+          \ endpoint: {endpoint.resource_name}\")\n\n    # \u2500\u2500 Deploy model\
+          \ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n   \
+          \ print(\"  Starting deploy (sync=True, this blocks until healthy)...\"\
+          )\n    try:\n        endpoint.deploy(\n            model=model,\n      \
+          \      deployed_model_display_name=deployed_model_display_name,\n      \
+          \      machine_type=machine_type,\n            min_replica_count=min_replicas,\n\
+          \            max_replica_count=max_replicas,\n            traffic_percentage=100,\n\
+          \            sync=True,\n        )\n    except Exception as deploy_err:\n\
+          \        print(\"\\n!!! endpoint.deploy() FAILED \u2014 full traceback below\
+          \ !!!\")\n        traceback.print_exc()\n        raise RuntimeError(\n \
+          \           f\"endpoint.deploy() failed for {env} endpoint: {deploy_err}\"\
+          \n        ) from deploy_err\n\n    endpoint_resource_name = endpoint.resource_name\n\
+          \    endpoint_id = endpoint_resource_name.split(\"/endpoints/\")[-1]\n\n\
+          \    print(f\"\\n  Endpoint resource name: {endpoint_resource_name}\")\n\
+          \    print(f\"  Endpoint ID:            {endpoint_id}\")\n    print(f\"\
+          === Model deployed to {env.upper()} ===\")\n\n    ServingOutputs = namedtuple(\"\
+          ServingOutputs\", [\"endpoint_resource_name\", \"endpoint_id\"])\n    return\
+          \ ServingOutputs(\n        endpoint_resource_name=endpoint_resource_name,\n\
+          \        endpoint_id=endpoint_id,\n    )\n\n"
+        image: python:3.10-slim
+    exec-model-training-op:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_training_op
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'scikit-learn==1.4.2'\
+          \ 'xgboost==2.0.3' 'pandas==2.2.2' 'numpy==1.26.4' 'joblib==1.4.2' 'google-cloud-aiplatform==1.60.0'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_training_op(\n    project_id: str,\n    region: str,\n\
+          \    staging_bucket: str,\n    experiment_name: str,\n    experiment_run_name:\
+          \ str,\n    preprocessed_train: Input[Dataset],\n    preprocessor_artifact:\
+          \ Input[Model],\n    # Hyperparameters\n    n_estimators: int,\n    max_depth:\
+          \ int,\n    learning_rate: float,\n    subsample: float,\n    colsample_bytree:\
+          \ float,\n    min_child_weight: int,\n    # Outputs\n    trained_model:\
+          \ Output[Model],\n    training_metrics: Output[Metrics],\n    feature_importance:\
+          \ Output[Artifact],\n) -> None:\n    \"\"\"Train XGBoost, log to Vertex\
+          \ AI Experiments, save full sklearn Pipeline.\"\"\"\n    import json\n \
+          \   import time\n    import uuid\n    import joblib\n    import numpy as\
+          \ np\n    import pandas as pd\n    from sklearn.pipeline import Pipeline\n\
+          \    from xgboost import XGBRegressor\n    from sklearn.metrics import mean_squared_error,\
+          \ r2_score, mean_absolute_error\n    import google.cloud.aiplatform as aip\n\
+          \n    aip.init(\n        project=project_id,\n        location=region,\n\
+          \        staging_bucket=staging_bucket,\n        experiment=experiment_name,\n\
+          \    )\n\n    TARGET = \"price\"\n\n    print(\"=== Loading preprocessed\
+          \ training data ===\")\n    train_df = pd.read_csv(preprocessed_train.path\
+          \ + \".csv\")\n    X_train = train_df.drop(columns=[TARGET])\n    y_train\
+          \ = train_df[TARGET]\n    print(f\"Training on {len(X_train):,} rows \xD7\
+          \ {X_train.shape[1]} features\")\n\n    # Load fitted preprocessor metadata\
+          \ for feature names\n    preprocessor_data = joblib.load(preprocessor_artifact.path\
+          \ + \".pkl\")\n    meta = preprocessor_data[\"meta\"]\n\n    # \u2500\u2500\
+          \ Start Vertex AI Experiment Run \u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    # Append\
+          \ a short UUID so component retries never collide on the same context name.\n\
+          \    unique_run_name = f\"{experiment_run_name}-{uuid.uuid4().hex[:6]}\"\
+          \n    print(f\"Experiment run name: {unique_run_name}\")\n    with aip.start_run(unique_run_name):\n\
+          \        params = {\n            \"n_estimators\":      n_estimators,\n\
+          \            \"max_depth\":         max_depth,\n            \"learning_rate\"\
+          :     learning_rate,\n            \"subsample\":         subsample,\n  \
+          \          \"colsample_bytree\":  colsample_bytree,\n            \"min_child_weight\"\
+          :  min_child_weight,\n        }\n        aip.log_params(params)\n\n    \
+          \    print(f\"=== Training XGBoost with params: {params} ===\")\n      \
+          \  t0 = time.time()\n\n        model = XGBRegressor(\n            n_estimators=n_estimators,\n\
+          \            max_depth=max_depth,\n            learning_rate=learning_rate,\n\
+          \            subsample=subsample,\n            colsample_bytree=colsample_bytree,\n\
+          \            min_child_weight=min_child_weight,\n            objective=\"\
+          reg:squarederror\",\n            random_state=42,\n            n_jobs=-1,\n\
+          \            eval_metric=\"rmse\",\n        )\n\n        # Fit with early-stopping\
+          \ eval set (last 10% of train as internal validation)\n        split = int(0.9\
+          \ * len(X_train))\n        X_tr, X_val = X_train.iloc[:split], X_train.iloc[split:]\n\
+          \        y_tr, y_val = y_train.iloc[:split], y_train.iloc[split:]\n\n  \
+          \      model.fit(\n            X_tr, y_tr,\n            eval_set=[(X_val,\
+          \ y_val)],\n            verbose=50,\n        )\n\n        elapsed = time.time()\
+          \ - t0\n        print(f\"Training completed in {elapsed:.1f}s\")\n\n   \
+          \     # \u2500\u2500 Training metrics \u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        y_pred_train\
+          \ = model.predict(X_train)\n        rmse_train = float(np.sqrt(mean_squared_error(y_train,\
+          \ y_pred_train)))\n        mae_train  = float(mean_absolute_error(y_train,\
+          \ y_pred_train))\n        r2_train   = float(r2_score(y_train, y_pred_train))\n\
+          \n        metrics_dict = {\n            \"train_rmse\":         rmse_train,\n\
+          \            \"train_mae\":          mae_train,\n            \"train_r2\"\
+          :           r2_train,\n            \"training_time_secs\": round(elapsed,\
+          \ 2),\n            \"best_iteration\":     int(model.best_iteration) if\
+          \ hasattr(model, \"best_iteration\") else n_estimators,\n        }\n   \
+          \     aip.log_metrics(metrics_dict)\n        print(\"Training metrics:\"\
+          , metrics_dict)\n\n        # Log to KFP Metrics artifact\n        for k,\
+          \ v in metrics_dict.items():\n            training_metrics.log_metric(k,\
+          \ v)\n\n    # \u2500\u2500 Save full pipeline (preprocessor + model) \u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\n    # We bundle preprocessor + xgb so the artifact\
+          \ is self-contained for serving\n    preprocessor = preprocessor_data[\"\
+          preprocessor\"]\n    full_pipeline = Pipeline([\n        (\"preprocessor\"\
+          , preprocessor),\n        (\"model\",        model),\n    ])\n\n    model_path\
+          \ = trained_model.path + \".pkl\"\n    joblib.dump(full_pipeline, model_path)\n\
+          \    print(f\"Full sklearn Pipeline saved \u2192 {model_path}\")\n\n   \
+          \ # \u2500\u2500 Feature importance \u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+          \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n   \
+          \ feature_names = meta[\"feature_names\"]\n    importance = dict(zip(feature_names,\
+          \ model.feature_importances_.tolist()))\n    importance_sorted = dict(sorted(importance.items(),\
+          \ key=lambda x: x[1], reverse=True))\n\n    with open(feature_importance.path\
+          \ + \".json\", \"w\") as f:\n        json.dump(importance_sorted, f, indent=2)\n\
+          \n    print(\"\\nTop-10 feature importances:\")\n    for feat, score in\
+          \ list(importance_sorted.items())[:10]:\n        print(f\"  {feat}: {score:.4f}\"\
+          )\n\n    print(\"=== Training complete ===\")\n\n"
+        image: python:3.10-slim
+        resources:
+          cpuLimit: 8.0
+          memoryLimit: 32.0
+pipelineInfo:
+  description: End-to-end MLOps training pipeline for used car price prediction. Ingests
+    from BigQuery, preprocesses, trains XGBoost, evaluates, registers in Model Registry,
+    and deploys to Staging + Production endpoints.
+  name: used-car-training-pipeline
+root:
+  dag:
+    outputs:
+      artifacts:
+        data-preprocessing-op-preprocessing_metrics:
+          artifactSelectors:
+          - outputArtifactKey: preprocessing_metrics
+            producerSubtask: data-preprocessing-op
+        model-evaluation-op-evaluation_metrics:
+          artifactSelectors:
+          - outputArtifactKey: evaluation_metrics
+            producerSubtask: model-evaluation-op
+        model-training-op-training_metrics:
+          artifactSelectors:
+          - outputArtifactKey: training_metrics
+            producerSubtask: model-training-op
+    tasks:
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - model-evaluation-op
+        - model-training-op
+        inputs:
+          artifacts:
+            pipelinechannel--model-training-op-trained_model:
+              taskOutputArtifact:
+                outputArtifactKey: trained_model
+                producerTask: model-training-op
+          parameters:
+            pipelinechannel--experiment_name:
+              componentInputParameter: experiment_name
+            pipelinechannel--model-evaluation-op-deploy_decision:
+              taskOutputParameter:
+                outputParameterKey: deploy_decision
+                producerTask: model-evaluation-op
+            pipelinechannel--model-evaluation-op-test_r2:
+              taskOutputParameter:
+                outputParameterKey: test_r2
+                producerTask: model-evaluation-op
+            pipelinechannel--model-evaluation-op-test_rmse:
+              taskOutputParameter:
+                outputParameterKey: test_rmse
+                producerTask: model-evaluation-op
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            pipelinechannel--prod_max_replicas:
+              componentInputParameter: prod_max_replicas
+            pipelinechannel--prod_min_replicas:
+              componentInputParameter: prod_min_replicas
+            pipelinechannel--project_id:
+              componentInputParameter: project_id
+            pipelinechannel--promote_to_production:
+              componentInputParameter: promote_to_production
+            pipelinechannel--region:
+              componentInputParameter: region
+            pipelinechannel--serving_container_image:
+              componentInputParameter: serving_container_image
+            pipelinechannel--serving_machine_type:
+              componentInputParameter: serving_machine_type
+            pipelinechannel--staging_bucket:
+              componentInputParameter: staging_bucket
+            pipelinechannel--staging_max_replicas:
+              componentInputParameter: staging_max_replicas
+            pipelinechannel--staging_min_replicas:
+              componentInputParameter: staging_min_replicas
+        taskInfo:
+          name: 'Gate: RMSE+R2 passed'
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--model-evaluation-op-deploy_decision']
+            == 'deploy'
+      data-ingestion-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-data-ingestion-op
+        inputs:
+          parameters:
+            bq_dataset:
+              componentInputParameter: bq_dataset
+            bq_test_table:
+              componentInputParameter: bq_test_table
+            bq_train_table:
+              componentInputParameter: bq_train_table
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+            staging_bucket:
+              componentInputParameter: staging_bucket
+            vertex_dataset_name:
+              componentInputParameter: vertex_dataset_name
+        taskInfo:
+          name: "1 \xB7 Data Ingestion (BigQuery \u2192 GCS)"
+      data-preprocessing-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-data-preprocessing-op
+        dependentTasks:
+        - data-ingestion-op
+        inputs:
+          artifacts:
+            test_data:
+              taskOutputArtifact:
+                outputArtifactKey: test_data
+                producerTask: data-ingestion-op
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: train_data
+                producerTask: data-ingestion-op
+          parameters:
+            experiment_name:
+              componentInputParameter: experiment_name
+            experiment_run_name:
+              runtimeValue:
+                constant: run-{{$.inputs.parameters['pipelinechannel--pipeline_run_id']}}
+            pipelinechannel--pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+            staging_bucket:
+              componentInputParameter: staging_bucket
+        taskInfo:
+          name: "2 \xB7 Feature Engineering & Preprocessing"
+      model-evaluation-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-evaluation-op
+        dependentTasks:
+        - data-preprocessing-op
+        - model-training-op
+        inputs:
+          artifacts:
+            feature_importance_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: feature_importance
+                producerTask: model-training-op
+            preprocessed_test:
+              taskOutputArtifact:
+                outputArtifactKey: preprocessed_test
+                producerTask: data-preprocessing-op
+            trained_model:
+              taskOutputArtifact:
+                outputArtifactKey: trained_model
+                producerTask: model-training-op
+          parameters:
+            experiment_name:
+              componentInputParameter: experiment_name
+            experiment_run_name:
+              runtimeValue:
+                constant: run-{{$.inputs.parameters['pipelinechannel--pipeline_run_id']}}
+            pipelinechannel--pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            project_id:
+              componentInputParameter: project_id
+            r2_threshold:
+              componentInputParameter: r2_threshold
+            region:
+              componentInputParameter: region
+            rmse_threshold:
+              componentInputParameter: rmse_threshold
+            staging_bucket:
+              componentInputParameter: staging_bucket
+        taskInfo:
+          name: "4 \xB7 Evaluation & Deployment Gate"
+      model-training-op:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-training-op
+        dependentTasks:
+        - data-preprocessing-op
+        inputs:
+          artifacts:
+            preprocessed_train:
+              taskOutputArtifact:
+                outputArtifactKey: preprocessed_train
+                producerTask: data-preprocessing-op
+            preprocessor_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: preprocessor_artifact
+                producerTask: data-preprocessing-op
+          parameters:
+            colsample_bytree:
+              componentInputParameter: colsample_bytree
+            experiment_name:
+              componentInputParameter: experiment_name
+            experiment_run_name:
+              runtimeValue:
+                constant: run-{{$.inputs.parameters['pipelinechannel--pipeline_run_id']}}
+            learning_rate:
+              componentInputParameter: learning_rate
+            max_depth:
+              componentInputParameter: max_depth
+            min_child_weight:
+              componentInputParameter: min_child_weight
+            n_estimators:
+              componentInputParameter: n_estimators
+            pipelinechannel--pipeline_run_id:
+              componentInputParameter: pipeline_run_id
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+            staging_bucket:
+              componentInputParameter: staging_bucket
+            subsample:
+              componentInputParameter: subsample
+        taskInfo:
+          name: "3 \xB7 XGBoost Training (logged to Experiments)"
+  inputDefinitions:
+    parameters:
+      bq_dataset:
+        defaultValue: used_car_mlops
+        isOptional: true
+        parameterType: STRING
+      bq_test_table:
+        defaultValue: car_prices_test
+        isOptional: true
+        parameterType: STRING
+      bq_train_table:
+        defaultValue: car_prices_train
+        isOptional: true
+        parameterType: STRING
+      colsample_bytree:
+        defaultValue: 0.8
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      experiment_name:
+        defaultValue: used-car-price-prediction
+        isOptional: true
+        parameterType: STRING
+      learning_rate:
+        defaultValue: 0.05
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      max_depth:
+        defaultValue: 6.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      min_child_weight:
+        defaultValue: 3.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      model_name:
+        defaultValue: used-car-price-xgb
+        isOptional: true
+        parameterType: STRING
+      n_estimators:
+        defaultValue: 300.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      pipeline_run_id:
+        defaultValue: manual
+        isOptional: true
+        parameterType: STRING
+      prod_max_replicas:
+        defaultValue: 5.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      prod_min_replicas:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      project_id:
+        parameterType: STRING
+      promote_to_production:
+        defaultValue: true
+        isOptional: true
+        parameterType: BOOLEAN
+      r2_threshold:
+        defaultValue: 0.8
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      region:
+        defaultValue: us-central1
+        isOptional: true
+        parameterType: STRING
+      rmse_threshold:
+        defaultValue: 4500.0
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      serving_container_image:
+        defaultValue: us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest
+        isOptional: true
+        parameterType: STRING
+      serving_machine_type:
+        defaultValue: n1-standard-4
+        isOptional: true
+        parameterType: STRING
+      staging_bucket:
+        defaultValue: gs://<YOUR_PROJECT>-mlops-artifacts
+        isOptional: true
+        parameterType: STRING
+      staging_max_replicas:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      staging_min_replicas:
+        defaultValue: 1.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      subsample:
+        defaultValue: 0.8
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      vertex_dataset_name:
+        defaultValue: used-car-prices-dataset
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    artifacts:
+      data-preprocessing-op-preprocessing_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      model-evaluation-op-evaluation_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+      model-training-op-training_metrics:
+        artifactType:
+          schemaTitle: system.Metrics
+          schemaVersion: 0.0.1
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.7.0

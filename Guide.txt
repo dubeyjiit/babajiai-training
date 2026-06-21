@@ -1,0 +1,13 @@
+Step 01 :
+gcloud cli
+to Authenticate (To GCP)
+Step 02 :
+will execute our shell scritp to creating nuckets, service accounts, ia, pos, bq, datasets
+Step 03 :
+Workload identify federation, GCP Project ID, region, bucket execute
+Step 04 :
+To have a dummy datasets
+Step 05:
+Config.yml
+Step 06 :
+Coding in python for out projects etc. kfp

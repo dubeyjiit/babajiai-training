@@ -1,0 +1,156 @@
+PROJECT_ID=babajiai-training REGION=us-central1 python3 - <<'PYEOF'
+import os, google.cloud.aiplatform as aip
+aip.init(project=os.environ["PROJECT_ID"], location=os.environ["REGION"])
+try:
+    aip.Experiment.create(
+        experiment_name="used-car-price-prediction",
+        description="XGBoost regression for used car price prediction",
+    )
+    print("Experiment created")
+except Exception as e:
+    if "already exists" in str(e).lower():
+        print("Experiment already exists — OK")
+    else:
+        raise
+PYEOF
+
+# 6. Create BigQuery dataset
+bq mk --dataset --location=US babajiai-training:used_car_mlops
+
+#7 https://github.com/dubeyjiit/babajiai-training
+gcloud iam workload-identity-pools create "github-actions-pool" \
+  --project="babajiai-training" \
+  --location="global" \
+  --display-name="GitHub Actions Pool"
+#8
+
+gcloud iam workload-identity-pools providers create-oidc "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --display-name="GitHub OIDC Provider" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="attribute.repository == 'dubeyjiit/babajiai-training'" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
+
+#9
+Bind the Service Account to the GitHub Repo
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "vertex-mlops-sa@babajiai-training.iam.gserviceaccount.com" \
+  --project="babajiai-training" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/225257452450/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/dubeyjiit/babajiai-training"
+
+#10
+gcloud iam workload-identity-pools providers describe "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --format="value(name)"
+
+Result - 10
+gcloud iam workload-identity-pools providers describe "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --format="value(name)"
+projects/225257452450/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+
+==============================================================
+Setup Execution with results
+==============================================================
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ PROJECT_ID=babajiai-training REGION=us-central1 python3 - <<'PYEOF'
+import os, google.cloud.aiplatform as aip
+aip.init(project=os.environ["PROJECT_ID"], location=os.environ["REGION"])
+try:
+    aip.Experiment.create(
+        experiment_name="used-car-price-prediction",
+        description="XGBoost regression for used car price prediction",
+    )
+    print("Experiment created")
+except Exception as e:
+    if "already exists" in str(e).lower():
+        print("Experiment already exists — OK")
+    else:
+        raise
+PYEOF
+
+
+
+Experiment already exists — OK
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ 
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ 
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ 
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ bq mk --dataset --location=US babajiai-training:used_car_mlops
+BigQuery error in mk operation: Dataset 'babajiai-training:used_car_mlops' already exists.
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ gcloud iam workload-identity-pools providers describe "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --format="value(name)"
+ERROR: (gcloud.iam.workload-identity-pools.providers.describe) NOT_FOUND: Requested entity was not found. This command is authenticated as dubeyparamanand41@gmail.com which is the active account specified by the [core/account] property.
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ gcloud iam workload-identity-pools create "github-actions-pool" \
+  --project="babajiai-training" \
+  --location="global" \
+  --display-name="GitHub Actions Pool"
+Created workload identity pool [github-actions-pool].
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ gcloud iam workload-identity-pools providers create-oidc "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --display-name="GitHub OIDC Provider" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="attribute.repository == 'dubeyjiit/babajiai-training'" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
+Created workload identity pool provider [github-actions-provider].
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ 
+gcloud iam service-accounts add-iam-policy-binding \
+  "vertex-mlops-sa@babajiai-training.iam.gserviceaccount.com" \
+  --project="babajiai-training" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/225257452450/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/dubeyjiit/babajiai-training"
+Updated IAM policy for serviceAccount [vertex-mlops-sa@babajiai-training.iam.gserviceaccount.com].
+bindings:
+- members:
+  - principalSet://iam.googleapis.com/projects/225257452450/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/dubeyjiit/babajiai-training
+  role: roles/iam.workloadIdentityUser
+etag: BwZTGqle26E=
+version: 1
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ gcloud iam workload-identity-pools providers describe "github-actions-provider" \
+  --project="babajiai-training" \
+  --location="global" \
+  --workload-identity-pool="github-actions-pool" \
+  --format="value(name)"
+projects/225257452450/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$
+==============================================================
+python data-generation.py 
+usage: data-generation.py [-h] --project PROJECT [--dataset DATASET] [--location LOCATION] [--local-only]
+data-generation.py: error: the following arguments are required: --project
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ python data-generation.py --project babajiai-training
+=== Generating synthetic used-car price data ===
+
+Train:     8,000 rows
+Test:      2,000 rows
+Inference: 500 rows
+
+Sample train data:
+   year  mileage  engine_size  horsepower fuel_type transmission     brand condition  accident_count  num_owners     price
+0  2019   124533          1.4         114  gasoline    automatic  Mercedes      good               1           2  35865.10
+1  2005    28242          2.5         184  gasoline       manual       Kia      fair               2           1   6762.99
+2  2001   177601          1.4         321  electric    automatic       BMW      good               0           1  16459.60
+
+Local CSVs saved to data/
+
+=== Uploading to BigQuery ===
+
+Uploaded 8,000 rows → babajiai-training.used_car_mlops.car_prices_train
+Uploaded 2,000 rows → babajiai-training.used_car_mlops.car_prices_test
+Uploaded 500 rows → babajiai-training.used_car_mlops.car_prices_inference
+Ensured predictions table: babajiai-training.used_car_mlops.car_predictions
+Ensured processed-tracking table: babajiai-training.used_car_mlops.car_prices_inference_processed
+
+=== Done ===
+(venv311) pd@GGSG-LPT-505:/mnt/d/PDP/MLOPS$ 
+==============================================================
