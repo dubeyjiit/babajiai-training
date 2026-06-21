@@ -104,3 +104,4 @@ def data_ingestion_op(
         }, f)
 
     print("=== Data ingestion complete ===")
+    
