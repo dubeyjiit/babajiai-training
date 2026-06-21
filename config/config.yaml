@@ -5,7 +5,7 @@ project:
   service_account: "vertex-mlops-sa@babajiai-training.iam.gserviceaccount.com"
 
 storage:
-  # GCS bucket for pipeline artifacts, compiled YAMLs, model artifacts ok
+  # GCS bucket for pipeline artifacts, compiled YAMLs, model artifacts final 01
   pipeline_root: "gs://babajiai-training-mlops-artifacts/pipeline_root"
   compiled_pipelines: "gs://babajiai-training-mlops-artifacts/compiled_pipelines"
   model_artifacts: "gs://babajiai-training-mlops-artifacts/models"
