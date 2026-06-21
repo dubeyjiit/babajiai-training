@@ -1,0 +1,178 @@
+name: "MLOps — Vertex AI Pipeline Deploy"
+on:
+  push:
+    branches: [main]
+    paths:
+      #- "components/**"
+      #- "pipelines/**"
+      - "config/config.yaml"
+  workflow_dispatch:
+    inputs:
+      run_training:
+        description: "Submit training pipeline after compile"
+        type: boolean
+        default: true
+      promote_to_production:
+        description: "Promote model to production endpoint"
+        type: boolean
+        default: true
+      run_id_override:
+        description: "Custom run ID (leave blank for auto)"
+        type: string
+        default: ""
+
+env:
+  PYTHON_VERSION: "3.10"
+  GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+
+jobs:
+  lint-and-validate:
+    name: "Lint & Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install lint dependencies
+        run: pip install ruff==0.4.4 kfp==2.7.0 pyyaml
+
+      - name: Ruff lint
+        run: ruff check components/ pipelines/ scripts/ --select=E,W,F --ignore=E501
+
+      - name: Validate pipeline imports (dry-run compile check)
+        run: |
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, ".")
+          # Only import — do not compile (avoids needing all ML packages)
+          from pipelines.training_pipeline  import training_pipeline
+          from pipelines.inference_pipeline import inference_pipeline
+          print("Pipeline imports OK")
+          EOF
+
+  compile-and-deploy:
+    name: "Compile Pipelines & Deploy"
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:            ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile pipelines
+        run: |
+          python scripts/compile_pipelines.py \
+            --upload \
+            --gcs-prefix "${{ secrets.GCS_BUCKET }}/compiled_pipelines"
+      - name: Upload compiled YAMLs
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-pipelines
+          path: compiled_pipelines/
+          retention-days: 30
+      - name: Generate run ID
+        id: run_id
+        run: |
+          OVERRIDE="${{ github.event.inputs.run_id_override }}"
+          if [ -n "${OVERRIDE}" ]; then
+            RUN_ID="${OVERRIDE}"
+          else
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+            RUN_ID="gh-${SHORT_SHA}-$(date -u +%Y%m%d%H%M%S)"
+          fi
+          echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+          echo "Run ID: ${RUN_ID}"
+
+      - name: Submit Training Pipeline
+        if: >
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.run_training == 'true')
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+        run: |
+          PROMOTE="${{ github.event.inputs.promote_to_production || 'true' }}"
+          PROMOTE_FLAG=""
+          if [ "${PROMOTE}" = "false" ]; then
+            PROMOTE_FLAG="--no-promote"
+          fi
+
+          python scripts/run_training_pipeline.py \
+            --project  "${PROJECT_ID}" \
+            --bucket   "${GCS_BUCKET}" \
+            --region   "${{ env.GCP_REGION }}" \
+            --run-id   "${{ steps.run_id.outputs.run_id }}" \
+            --compiled-yaml compiled_pipelines/training_pipeline.yaml \
+            ${PROMOTE_FLAG}
+
+      # ── Deploy / update the inference trigger Cloud Function ───────────────
+      - name: Deploy Inference Trigger Cloud Function
+        env:
+          PROJECT_ID:      ${{ secrets.GCP_PROJECT_ID }}
+          REGION:          ${{ env.GCP_REGION }}
+          STAGING_BUCKET:  ${{ secrets.GCS_BUCKET }}
+          ENDPOINT_ID:         ${{ secrets.PRODUCTION_ENDPOINT_ID || '' }}
+          MODEL_RESOURCE_NAME: ${{ secrets.MODEL_RESOURCE_NAME || '' }}
+          PREPROCESSOR_GCS:    ${{ secrets.PREPROCESSOR_GCS_PATH || '' }}
+        run: |
+          SA_EMAIL="vertex-mlops-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+          COMPILED_YAML_GCS="${STAGING_BUCKET}/compiled_pipelines/inference_pipeline.yaml"
+
+          gcloud functions deploy "bq-inference-trigger" \
+            --gen2 \
+            --runtime=python311 \
+            --region="${REGION}" \
+            --source="triggers/bq_trigger_function" \
+            --entry-point=trigger_inference_pipeline \
+            --trigger-http \
+            --allow-unauthenticated \
+            --service-account="${SA_EMAIL}" \
+            --timeout=540s \
+            --memory=512Mi \
+            --set-env-vars="\
+          PROJECT_ID=${PROJECT_ID},\
+          REGION=${REGION},\
+          STAGING_BUCKET=${STAGING_BUCKET},\
+          COMPILED_INFERENCE_YAML_GCS=${COMPILED_YAML_GCS},\
+          PRODUCTION_ENDPOINT_ID=${ENDPOINT_ID},\
+          MODEL_RESOURCE_NAME=${MODEL_RESOURCE_NAME},\
+          PREPROCESSOR_GCS_PATH=${PREPROCESSOR_GCS},\
+          BATCH_THRESHOLD=100" \
+            --project="${PROJECT_ID}"
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## MLOps Pipeline Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | \`${{ steps.run_id.outputs.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Project | \`${{ secrets.GCP_PROJECT_ID }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | \`${{ env.GCP_REGION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View Pipelines in Vertex AI](https://console.cloud.google.com/vertex-ai/pipelines/runs?project=${{ secrets.GCP_PROJECT_ID }})" >> $GITHUB_STEP_SUMMARY
+          echo "[View Experiments](https://console.cloud.google.com/vertex-ai/experiments?project=${{ secrets.GCP_PROJECT_ID }})" >> $GITHUB_STEP_SUMMARY
