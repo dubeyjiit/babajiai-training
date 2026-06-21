@@ -108,5 +108,4 @@ if __name__ == "__main__":
         staging_bucket=args.bucket,
         run_id=run_id,
         promote_to_production=not args.no_promote,
-        compiled_yaml=args.compiled_yaml,
-    )
+        compiled_yaml=args.compiled_yaml,)

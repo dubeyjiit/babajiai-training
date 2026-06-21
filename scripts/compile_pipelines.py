@@ -50,3 +50,4 @@ if __name__ == "__main__":
     parser.add_argument("--gcs-prefix", default="",          help="GCS prefix for upload (e.g. gs://bucket/compiled)")
     args = parser.parse_args()
     compile_pipelines(upload=args.upload, gcs_prefix=args.gcs_prefix)
+#end#
